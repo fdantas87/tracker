@@ -4,12 +4,11 @@ import { useActionState } from "react"
 import { KeyRound, LoaderCircle, Save } from "lucide-react"
 
 import {
-  IDLE_STATE,
   createInitialSettings,
   regenerateWebhookToken,
   saveGeneralSettings,
-  type ActionState,
 } from "@/app/(dashboard)/configuracoes/actions"
+import { IDLE_STATE, type ActionState } from "@/lib/settings/action-state"
 import type { SettingsRow } from "@/lib/settings/queries"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"

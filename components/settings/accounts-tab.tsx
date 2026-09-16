@@ -16,8 +16,8 @@ import {
   deleteAccount,
   testAccountConnection,
   toggleAccountActive,
-  IDLE_STATE,
 } from "@/app/(dashboard)/configuracoes/actions"
+import { IDLE_STATE } from "@/lib/settings/action-state"
 import type { ConnectionTestResult } from "@/lib/connections/test-connection"
 import { ACCOUNT_CONFIG, type AccountKind } from "@/lib/settings/config"
 import type { AccountRow } from "@/lib/settings/queries"

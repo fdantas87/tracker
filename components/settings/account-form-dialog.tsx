@@ -4,11 +4,8 @@ import * as React from "react"
 import { useActionState } from "react"
 import { LoaderCircle } from "lucide-react"
 
-import {
-  IDLE_STATE,
-  saveAccount,
-  type ActionState,
-} from "@/app/(dashboard)/configuracoes/actions"
+import { saveAccount } from "@/app/(dashboard)/configuracoes/actions"
+import { IDLE_STATE, type ActionState } from "@/lib/settings/action-state"
 import { ACCOUNT_CONFIG, type AccountKind } from "@/lib/settings/config"
 import type { AccountRow } from "@/lib/settings/queries"
 import { Button } from "@/components/ui/button"

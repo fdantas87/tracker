@@ -20,6 +20,10 @@ import {
   type ConnectionTestResult,
 } from "@/lib/connections/test-connection"
 import { createServiceClient } from "@/lib/supabase/service"
+// ATENÇÃO: este arquivo é "use server" — só pode EXPORTAR funções assíncronas.
+// O tipo e a constante de estado vivem em lib/settings/action-state.ts porque
+// exportar um objeto daqui quebra a página em tempo de execução.
+import type { ActionState } from "@/lib/settings/action-state"
 import {
   ACCOUNT_CONFIG,
   MAX_LABEL_LENGTH,
@@ -28,15 +32,6 @@ import {
   isAccountKind,
   type AccountKind,
 } from "@/lib/settings/config"
-
-export type ActionState = {
-  ok: boolean
-  message: string | null
-  /** Token do webhook em texto puro — devolvido UMA única vez, nunca persistido. */
-  revealedToken?: string | null
-}
-
-export const IDLE_STATE: ActionState = { ok: false, message: null }
 
 const CURRENCIES = ["BRL", "USD", "EUR"] as const
 
