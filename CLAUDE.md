@@ -18,6 +18,7 @@
 - **shadcn/ui** (base Radix, preset `nova` no init — sobrescrito pelos tokens próprios do design system, ver abaixo)
 - **next-themes** — dark como padrão, toggle para light (sem `enableSystem`)
 - **Supabase** (Postgres + Auth + Vault/pgsodium + pg_cron) — projeto criado, URL/anon/service_role em `.env.local` (nunca commitado); schema aplicado via migrations manuais (ver "Banco de dados" abaixo)
+- **@supabase/ssr** + **@supabase/supabase-js** — sessão em cookies no App Router (ver "Autenticação e shell")
 - **Recharts** e **react-simple-maps** — entram nas fases 8/9 (dashboard/geo), não instalados ainda
 - **Upstash Redis** (`@upstash/ratelimit`) — entra na fase 5 (captura de eventos)
 - **GitHub** para versionamento, **Vercel** para deploy (projeto próprio, root directory `apps/tracking.negou.net`, sem `vercel.json` — env vars só na dashboard da Vercel, seguindo `VERCEL_DEPLOY.md` da raiz do monorepo)
@@ -28,18 +29,17 @@
 
 ```
 apps/tracking.negou.net/
-├── middleware.ts                          # [fase 3] @supabase/ssr: refresh de sessão + guarda do dashboard
+├── proxy.ts                                # ✅ fase 3 — refresh de sessão + guarda de rota (era "middleware.ts" antes do Next 16)
 ├── app/
-│   ├── (auth)/login/page.tsx               # [fase 3] único ponto de entrada, sem signup
-│   ├── (dashboard)/                        # [fase 3+] layout autenticado, nav, páginas
-│   │   ├── page.tsx                        # Visão geral        [fase 8]
+│   ├── (auth)/login/                       # ✅ fase 3 — page.tsx + login-form.tsx, único ponto de entrada, sem signup
+│   ├── (dashboard)/                        # ✅ fase 3 — layout autenticado + nav; páginas ainda são placeholders
+│   │   ├── page.tsx                        # Visão geral        [conteúdo real: fase 8]
 │   │   ├── eventos/page.tsx                # [fase 8]
 │   │   ├── faturamento/page.tsx            # [fase 8]
 │   │   ├── campanhas/page.tsx              # [fase 9]
 │   │   ├── geo/page.tsx                    # [fase 8]
-│   │   └── configuracoes/                  # [fase 4] CRUD de credenciais (Server Actions)
-│   ├── layout.tsx                          # ✅ fase 1 — fontes, ThemeProvider
-│   ├── page.tsx                            # ✅ fase 1 — placeholder do design system (será substituída pela home do dashboard)
+│   │   └── configuracoes/page.tsx          # [fase 4] CRUD de credenciais (Server Actions)
+│   ├── layout.tsx                          # ✅ fase 1/3 — fontes, ThemeProvider, TooltipProvider
 │   ├── globals.css                         # ✅ fase 1 — tokens HSL, gradiente, glass, tabular-nums
 │   └── api/
 │       ├── identify/route.ts               # [fase 5]
@@ -47,17 +47,25 @@ apps/tracking.negou.net/
 │       ├── config/public/route.ts          # [fase 5]
 │       └── webhook/compra/[platform]/route.ts   # [fase 7]
 ├── lib/
-│   ├── supabase/{server,service,middleware}.ts   # [fase 2/3]
-│   ├── crypto/{vault,webhook-token}.ts           # [fase 2/4]
+│   ├── supabase/env.ts                     # ✅ fase 3 — leitura validada das env vars
+│   ├── supabase/server.ts                  # ✅ fase 3 — cliente SSR (anon + cookies), respeita RLS
+│   ├── supabase/service.ts                 # ✅ fase 3 — cliente service_role, `server-only`
+│   ├── supabase/proxy.ts                   # ✅ fase 3 — updateSession() usado pelo proxy.ts da raiz
+│   ├── auth/actions.ts                     # ✅ fase 3 — signIn/signOut (Server Actions)
+│   ├── crypto/{vault,webhook-token}.ts     # [fase 4]
 │   ├── meta/capi.ts                        # [fase 6] META_GRAPH_API_VERSION numa constante única
 │   ├── ga4/mp.ts                           # [fase 6]
 │   ├── geo.ts                              # [fase 5] headers x-vercel-ip-*
 │   ├── rate-limit.ts                       # [fase 5]
 │   └── webhooks/adapters/{index,perfectpay}.ts   # [fase 7]
 ├── components/
-│   ├── ui/                                 # ✅ shadcn (button, card, badge, separator, switch — mais componentes conforme necessário)
+│   ├── ui/                                 # ✅ shadcn (button, card, badge, separator, switch, sidebar, sheet, dropdown-menu, input, label, alert, tooltip, skeleton)
+│   ├── dashboard-sidebar.tsx               # ✅ fase 3 — navegação (drawer no celular, sidebar no desktop)
+│   ├── user-menu.tsx                       # ✅ fase 3 — conta + sair
+│   ├── page-header.tsx                     # ✅ fase 3 — cabeçalho e placeholder de fase
 │   ├── theme-provider.tsx                  # ✅ fase 1
 │   └── theme-toggle.tsx                    # ✅ fase 1
+├── hooks/use-mobile.ts                     # ✅ fase 3 — reescrito com useSyncExternalStore (ver "Autenticação e shell")
 ├── public/track.js                         # [fase 5] snippet embutível para lp.negou.net/quiz.negou.net
 └── supabase/
     ├── migrations/                          # ✅ fase 2 — SQL das 7 tabelas + RLS + Vault + pg_cron
@@ -97,6 +105,21 @@ apps/tracking.negou.net/
 
 ---
 
+## Autenticação e shell do painel (fase 3 — implementado)
+
+- **`proxy.ts`, não `middleware.ts`.** O Next.js 16 renomeou o arquivo (mesma funcionalidade, só o nome do arquivo e do export mudaram) e roda no runtime Node.js por padrão — a opção `runtime` nem existe mais lá. Documentação em `node_modules/next/dist/docs/01-app/03-api-reference/03-file-conventions/proxy.md`.
+- **Duas barreiras, de propósito.** O `proxy.ts` renova a sessão e redireciona quem não tem login, mas a doc do Next é explícita que isso é uma checagem *otimista* e não deve ser a única autorização. Por isso `app/(dashboard)/layout.tsx` chama `getUser()` de novo antes de renderizar. Não remova a segunda checagem.
+- **Cuidados do `@supabase/ssr` (0.12.x)** que não estão em tutoriais antigos:
+  - `setAll(cookiesToSet, headers)` recebe um **segundo argumento** com headers anti-cache. Eles precisam ir pra resposta: resposta que grava cookie de sessão não pode ser cacheada por CDN, senão o token de um usuário é servido pra outro.
+  - Nada de lógica entre `createServerClient()` e `getUser()`, e `getUser()` tem que ser chamado antes de a resposta ser gerada — senão o refresh se perde e vira logout aleatório.
+  - Ao redirecionar, os cookies recém-gravados precisam ser copiados pra resposta de redirect (`redirectTo()` em `lib/supabase/proxy.ts` faz isso), ou a sessão renovada é descartada.
+- **Matcher do proxy exclui `/api/*`** — os endpoints de captura e webhook (fases 5 a 7) são públicos, de alto volume e não têm sessão.
+- **Login:** email/senha via Server Action (`lib/auth/actions.ts`). Erro sempre genérico ("Email ou senha incorretos") pra não revelar quais emails têm conta. Não existe rota de cadastro; contas nascem no Supabase Studio.
+- **Navegação:** `components/dashboard-sidebar.tsx` sobre o `sidebar` do shadcn — sidebar no desktop, drawer que fecha sozinho ao navegar no celular. Usa os tokens `--sidebar-*` já definidos na fase 1.
+- **`hooks/use-mobile.ts` foi reescrito** com `useSyncExternalStore`: a versão que o shadcn gera usa `useEffect` + `setState` e quebra o lint do React 19 (`react-hooks/set-state-in-effect`). Se rodar `shadcn add sidebar --overwrite`, o arquivo volta ao original e o lint quebra — reaplique a versão do repo.
+
+---
+
 ## Convenções
 
 ### Git & Commits
@@ -126,7 +149,7 @@ apps/tracking.negou.net/
 
 1. ✅ **Fundação** — scaffold Next.js/React, Tailwind + shadcn/ui, design tokens, `.gitignore`, `CLAUDE.md`
 2. ✅ **Banco de dados e segurança** — migrations (7 tabelas, RLS, Vault, pg_cron) aplicadas no Supabase e verificadas em 2026-09-16 (`verify_phase2.sql` passou limpo + conferência independente via REST API)
-3. ⏳ Autenticação e shell do dashboard
+3. ✅ **Autenticação e shell do dashboard** — `proxy.ts` (sessão + guarda), login email/senha, layout autenticado com navegação responsiva, toggle de tema, e leitura autenticada real na Visão geral provando RLS
 4. ⏳ Painel de configurações (CRUD credenciais + testar conexão)
 5. ⏳ Captura de eventos (`/api/identify`, `/api/event`, script cliente)
 6. ⏳ Disparo Meta CAPI + GA4 Measurement Protocol
@@ -141,7 +164,7 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 
 - ✅ ~~Criar o projeto Supabase~~ — feito; URL/anon/service_role em `.env.local`.
 - ✅ ~~Rodar as 5 migrations da fase 2 + `verify_phase2.sql`~~ — feito e verificado (Vault já vinha habilitado no projeto, não precisou de passo extra em Database → Extensions).
-- **Criar um usuário do painel** no Supabase Studio (Authentication → Users → Add user, com email e senha) — necessário pra testar o login na fase 3. Não existe tela de cadastro no app, de propósito.
+- ✅ ~~Criar um usuário do painel no Supabase Studio~~ — feito; 2 contas cadastradas, ambas com email confirmado.
 - **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase.
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
 
@@ -177,4 +200,5 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 - **2026-09-16:** Fase 1 concluída — scaffold Next.js 16.3.5/React 19.2.8, Tailwind v4 + shadcn/ui (Radix, preset nova), design tokens HSL (verde-neon/ciano/âmbar, dark padrão + toggle claro), fontes Manrope + JetBrains Mono, `.gitignore` protegendo os `.txt` de credencial soltos, página placeholder demonstrando o design system.
 - **2026-09-16:** Projeto Supabase criado pelo usuário; URL/anon/service_role movidos para `.env.local`. Os 8 arquivos de credencial soltos (Meta, GA4, Supabase) consolidados em `.credenciais-locais/`, uma única pasta gitignorada — mais robusto do que listar nomes exatos.
 - **2026-09-16:** Fase 2 (migrations) escrita — 5 arquivos SQL em `supabase/migrations/` (extensões, tabelas, RLS, funções de Vault, job de retenção) + `supabase/verify_phase2.sql`. Aplicação é manual (colar no SQL Editor do Supabase), por decisão do usuário de não compartilhar um Personal Access Token/senha de banco novo.
+- **2026-09-16:** Fase 3 — autenticação e shell do painel. `proxy.ts` (nome novo do middleware no Next 16) cuidando de refresh de sessão, headers anti-cache e guarda de rota; login por email/senha via Server Action; layout autenticado com sidebar responsiva, menu de conta e toggle de tema; Visão geral fazendo leitura autenticada real das 3 tabelas pra provar o caminho sessão → RLS → dado. Guarda verificada por HTTP: `/`, `/eventos` e `/configuracoes` sem sessão devolvem 307 para `/login`.
 - **2026-09-16:** Fase 2 aplicada e verificada no projeto Supabase. `verify_phase2.sql` passou limpo, e uma conferência independente pela REST API confirmou: as 7 tabelas existem; a chave `anon` leva 401 em `ga4_accounts` (revoke funcionando) e lê `visitors` com lista vazia (RLS filtrando); `reveal_secret` e `purge_old_event_payloads` respondem via RPC com `service_role`.
