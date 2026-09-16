@@ -13,17 +13,26 @@ import {
  * `status` distingue três coisas de propósito:
  * - "ok": funcionou de verdade, ponta a ponta
  * - "erro": a API respondeu que não funciona
- * - "parcial": o que dava pra checar passou, mas a API não permite confirmar
- *   as credenciais (caso do GA4 — ver abaixo). Nunca pintar isso de verde:
- *   um "conectado" que mente é pior do que nenhum teste.
+ * - "verificar": o envio deu certo, mas quem confirma é você, olhando do outro
+ *   lado (caso do GA4 — ver abaixo). NÃO é erro, e a UI não deve pintar como
+ *   se fosse; mas também não pode virar verde, porque um "conectado" que
+ *   mente é pior do que nenhum teste.
  */
 export type ConnectionTestResult = {
-  status: "ok" | "erro" | "parcial"
+  status: "ok" | "erro" | "verificar"
   message: string
   detail?: string
 }
 
 const GA4_DEBUG_ENDPOINT = "https://www.google-analytics.com/debug/mp/collect"
+const GA4_COLLECT_ENDPOINT = "https://www.google-analytics.com/mp/collect"
+
+/**
+ * Nome próprio em vez de `page_view`: assim o evento de teste não entra nas
+ * métricas padrão do GA4 (sessões, page views) e é fácil de reconhecer e
+ * ignorar em qualquer relatório.
+ */
+const GA4_TEST_EVENT_NAME = "negou_teste_conexao"
 
 /** Os IDs vão interpolados em URL: só aceita o formato exato, nunca texto livre (anti-SSRF). */
 const PIXEL_ID_PATTERN = /^[0-9]+$/
@@ -174,7 +183,7 @@ export async function testMetaAdAccountConnection(params: {
     const active = body.account_status === 1
 
     return {
-      status: active ? "ok" : "parcial",
+      status: active ? "ok" : "verificar",
       message: active
         ? `Conectado a "${body.name}" (${body.currency}).`
         : `Conectado a "${body.name}", mas a conta não está ativa (status ${body.account_status}).`,
@@ -188,17 +197,23 @@ export async function testMetaAdAccountConnection(params: {
 }
 
 /**
- * Testa uma propriedade GA4 no endpoint de validação do Measurement Protocol.
+ * Testa uma propriedade GA4 em dois passos.
  *
- * LIMITAÇÃO IMPORTANTE, verificada na prática: esse endpoint valida só o
- * FORMATO do evento — não as credenciais. Testei com api_secret inválido e com
- * measurement_id inexistente: os dois devolvem HTTP 200 e zero mensagens de
- * validação. Ou seja, é impossível confirmar por API que a credencial do GA4
- * está certa.
+ * 1. Valida o formato no endpoint de debug (pega nome reservado, client_id
+ *    faltando, etc.).
+ * 2. ENVIA de verdade um evento `negou_teste_conexao` com `debug_mode`, pelo
+ *    endpoint normal do Measurement Protocol, pra ele aparecer no DebugView.
  *
- * Por isso o melhor resultado possível aqui é "parcial", nunca "ok": o que dá
- * pra afirmar é que o endpoint respondeu e o payload é válido. A confirmação
- * real é ver o evento chegando no DebugView/Tempo real do GA4.
+ * Por que o passo 2 existe: verificado na prática, o endpoint de validação
+ * NÃO confere credenciais — com api_secret inválido e com measurement_id
+ * inexistente, os dois devolvem HTTP 200 e zero mensagens. E o endpoint de
+ * coleta devolve 204 sempre, dando certo ou errado. Não existe, em nenhum dos
+ * dois, uma resposta que prove que a credencial está certa.
+ *
+ * O que dá pra fazer é entregar o evento e deixar a confirmação a um passo de
+ * distância: se as credenciais estiverem certas, ele aparece no DebugView em
+ * segundos; se estiverem erradas, nunca aparece. Daí o status "verificar" —
+ * não é falha, é a última milha que só o GA4 pode responder.
  */
 export async function testGa4Connection(params: {
   measurementId: string
@@ -217,35 +232,35 @@ export async function testGa4Connection(params: {
     client_id: `${Math.floor(Math.random() * 1e10)}.${Math.floor(Date.now() / 1000)}`,
     events: [
       {
-        name: "page_view",
-        params: { page_location: "https://negou.net/", debug_mode: 1 },
+        name: GA4_TEST_EVENT_NAME,
+        params: { debug_mode: 1, origem: "painel_negou_tracking" },
       },
     ],
   }
 
   try {
-    const url = new URL(GA4_DEBUG_ENDPOINT)
-    url.searchParams.set("measurement_id", measurementId)
-    url.searchParams.set("api_secret", apiSecret)
+    // Passo 1: validação de formato.
+    const debugUrl = new URL(GA4_DEBUG_ENDPOINT)
+    debugUrl.searchParams.set("measurement_id", measurementId)
+    debugUrl.searchParams.set("api_secret", apiSecret)
 
-    const response = await fetchWithTimeout(url.toString(), {
+    const debugResponse = await fetchWithTimeout(debugUrl.toString(), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     })
 
-    if (!response.ok) {
+    if (!debugResponse.ok) {
       return {
         status: "erro",
-        message: `O GA4 respondeu HTTP ${response.status}.`,
+        message: `O GA4 respondeu HTTP ${debugResponse.status}.`,
       }
     }
 
-    const body = (await response.json()) as {
+    const debugBody = (await debugResponse.json()) as {
       validationMessages?: { description?: string; validationCode?: string }[]
     }
-
-    const problems = body.validationMessages ?? []
+    const problems = debugBody.validationMessages ?? []
 
     if (problems.length > 0) {
       return {
@@ -255,12 +270,32 @@ export async function testGa4Connection(params: {
       }
     }
 
+    // Passo 2: envio real, pra dar o que olhar no DebugView.
+    const collectUrl = new URL(GA4_COLLECT_ENDPOINT)
+    collectUrl.searchParams.set("measurement_id", measurementId)
+    collectUrl.searchParams.set("api_secret", apiSecret)
+
+    const collectResponse = await fetchWithTimeout(collectUrl.toString(), {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+
+    if (collectResponse.status >= 400) {
+      return {
+        status: "erro",
+        message: `O GA4 recusou o envio (HTTP ${collectResponse.status}).`,
+      }
+    }
+
     return {
-      status: "parcial",
-      message: "Endpoint respondeu e o formato do evento é válido.",
+      status: "verificar",
+      message: `Evento de teste enviado. Confira no DebugView do GA4.`,
       detail:
-        "A API do GA4 não valida credenciais: measurement_id e api_secret errados também passam por aqui. " +
-        "Para confirmar de verdade, veja o evento chegando em Administrador → DebugView no GA4.",
+        `Abra Administrador → DebugView: o evento "${GA4_TEST_EVENT_NAME}" deve aparecer em alguns segundos. ` +
+        "Se aparecer, as credenciais estão certas. Se não aparecer, o measurement ID ou o api secret estão errados — " +
+        "a API do Google aceita credencial inválida sem reclamar, então essa é a única forma de ter certeza. " +
+        "O evento tem nome próprio e não entra nas métricas de páginas ou sessões.",
     }
   } catch (error) {
     return { status: "erro", message: networkErrorMessage(error) }

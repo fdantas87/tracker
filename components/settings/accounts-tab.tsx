@@ -3,7 +3,8 @@
 import * as React from "react"
 import {
   CheckCircle2,
-  CircleAlert,
+  ExternalLink,
+  Info,
   LoaderCircle,
   Pencil,
   Plus,
@@ -196,7 +197,7 @@ function AccountCard({
         </div>
       </div>
 
-      {testResult ? <TestResult result={testResult} /> : null}
+      {testResult ? <TestResult result={testResult} kind={kind} /> : null}
 
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
         <AlertDialogContent>
@@ -219,10 +220,22 @@ function AccountCard({
   )
 }
 
-function TestResult({ result }: { result: ConnectionTestResult }) {
+const GA4_DEBUGVIEW_URL =
+  "https://analytics.google.com/analytics/web/#/debugview"
+
+function TestResult({
+  result,
+  kind,
+}: {
+  result: ConnectionTestResult
+  kind: AccountKind
+}) {
+  // "verificar" usa ciano (informativo), não âmbar: não é alerta, é um passo
+  // que só você pode concluir. Pintar de amarelo fazia parecer que algo tinha
+  // dado errado quando não deu.
   const tone = {
     ok: { icon: CheckCircle2, className: "text-primary" },
-    parcial: { icon: CircleAlert, className: "text-amber" },
+    verificar: { icon: Info, className: "text-cyan" },
     erro: { icon: XCircle, className: "text-destructive" },
   }[result.status]
 
@@ -235,6 +248,17 @@ function TestResult({ result }: { result: ConnectionTestResult }) {
         <p className="text-sm">{result.message}</p>
         {result.detail ? (
           <p className="mt-1 text-xs text-muted-foreground">{result.detail}</p>
+        ) : null}
+        {kind === "ga4" && result.status === "verificar" ? (
+          <a
+            href={GA4_DEBUGVIEW_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-2 inline-flex items-center gap-1 text-xs font-medium text-cyan hover:underline"
+          >
+            Abrir o DebugView do GA4
+            <ExternalLink className="size-3" />
+          </a>
         ) : null}
       </div>
     </div>
