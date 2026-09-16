@@ -40,9 +40,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# Credenciais soltas (arquivos de referência, nunca versionar)
-Chave_API_GA4.txt
-ID_metrica_GA4.txt
-Meta_Pixel_API_Token.txt
-Meta_Pixel_ID.txt
-Token_Admin_BM_Meta.txt
+# Credenciais soltas (arquivos de referência, NUNCA versionar) — todas
+# ficam dentro desta pasta dedicada:
+/.credenciais-locais/

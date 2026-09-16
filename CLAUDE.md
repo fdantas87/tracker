@@ -17,7 +17,7 @@
 - **Tailwind CSS v4** (config 100% em CSS via `@theme inline`, sem `tailwind.config.js`)
 - **shadcn/ui** (base Radix, preset `nova` no init — sobrescrito pelos tokens próprios do design system, ver abaixo)
 - **next-themes** — dark como padrão, toggle para light (sem `enableSystem`)
-- **Supabase** (Postgres + Auth + Vault/pgsodium + pg_cron) — **ainda não provisionado** (ver "Pendências manuais")
+- **Supabase** (Postgres + Auth + Vault/pgsodium + pg_cron) — projeto criado, URL/anon/service_role em `.env.local` (nunca commitado); schema aplicado via migrations manuais (ver "Banco de dados" abaixo)
 - **Recharts** e **react-simple-maps** — entram nas fases 8/9 (dashboard/geo), não instalados ainda
 - **Upstash Redis** (`@upstash/ratelimit`) — entra na fase 5 (captura de eventos)
 - **GitHub** para versionamento, **Vercel** para deploy (projeto próprio, root directory `apps/tracking.negou.net`, sem `vercel.json` — env vars só na dashboard da Vercel, seguindo `VERCEL_DEPLOY.md` da raiz do monorepo)
@@ -59,7 +59,9 @@ apps/tracking.negou.net/
 │   ├── theme-provider.tsx                  # ✅ fase 1
 │   └── theme-toggle.tsx                    # ✅ fase 1
 ├── public/track.js                         # [fase 5] snippet embutível para lp.negou.net/quiz.negou.net
-└── supabase/migrations/                    # [fase 2] SQL das 7 tabelas + RLS + Vault + pg_cron
+└── supabase/
+    ├── migrations/                          # ✅ fase 2 — SQL das 7 tabelas + RLS + Vault + pg_cron
+    └── verify_phase2.sql                    # ✅ fase 2 — queries de verificação (roda manual, não é migration)
 ```
 
 ---
@@ -80,6 +82,21 @@ apps/tracking.negou.net/
 
 ---
 
+## Banco de dados (fase 2 — implementado)
+
+- **Como aplicar:** as migrations em `supabase/migrations/` **não** são rodadas por CLI — cole cada arquivo, na ordem do nome (timestamp crescente), no SQL Editor do painel Supabase (dashboard.supabase.com → projeto → SQL Editor) e rode. Depois dos 5 arquivos, rode `supabase/verify_phase2.sql` pra conferir que RLS/Vault/cron estão corretos. Essa é uma decisão deliberada: nenhum token/senha novo precisa ser compartilhado pra manter o banco atualizado.
+- **7 tabelas:** `settings` (singleton), `ga4_accounts`, `meta_pixels`, `meta_ad_accounts` (contas/credenciais), `visitors`, `events_log`, `purchases` (dados de tracking).
+- **RLS:**
+  - `visitors`/`events_log`/`purchases`: `authenticated` tem `SELECT` (`using (true)`, empresa única sem multi-tenant); nenhuma política de escrita — só `service_role` grava (ignora RLS via `BYPASSRLS`).
+  - `settings`/`ga4_accounts`/`meta_pixels`/`meta_ad_accounts`: **nenhuma política de SELECT**, nem pra `authenticated` — proposital, defesa em profundidade. Toda leitura passa por Server Action com `service_role` (fase 4). Não "conserte" isso adicionando uma policy achando que faltou.
+- **Segredos reversíveis** (`api_secret`, `capi_token`, `ads_token`) ficam no **Supabase Vault** — as tabelas guardam só `*_vault_id uuid not null` (sem FK formal pra `vault.secrets`, de propósito: a criação das tabelas não fica acoplada ao Vault estar disponível no projeto; a integridade é garantida em código na fase 4). Acesso só via 4 funções `SECURITY DEFINER` em `public` (`store_secret`, `reveal_secret`, `update_secret`, `delete_secret`), `execute` revogado de todo mundo exceto `service_role`.
+- **`settings.webhook_token`**: nunca fica em texto puro nem cifrado-reversível — só `webhook_token_hash` (SHA-256). O token bruto é gerado com `crypto.randomBytes(32)` na fase 4, mostrado uma única vez na UI, e a verificação do webhook compara hash com `timingSafeEqual`.
+- **`purchases.platform`**: enum `perfectpay | hotmart | kiwify | eduzz` (PerfectPay é a plataforma em uso agora — ver fase 7). `status` é um enum canônico normalizado (`approved/refunded/chargeback/canceled/pending/expired`); o valor bruto da plataforma fica em `platform_status` para auditoria.
+- **Retenção:** função `purge_old_event_payloads()` + job `pg_cron` diário (`purge_old_event_payloads_daily`, 04:00 UTC) zeram os 4 campos jsonb pesados de `events_log` com mais de 14 dias, em lotes de 500, sem apagar a linha.
+- **`updated_at`**: trigger `set_updated_at` em todas as tabelas que têm a coluna (menos `events_log`, que não tem — é só log de eventos, sempre criado uma vez).
+
+---
+
 ## Convenções
 
 ### Git & Commits
@@ -96,7 +113,7 @@ apps/tracking.negou.net/
 - `service_role` do Supabase só em arquivos com import `server-only`, nunca no client
 - Credenciais de destino (GA4/Meta) **cifradas** (Supabase Vault), nunca em texto puro em coluna de tabela
 - Cadastro público de usuário do painel **desligado** — contas criadas manualmente no Supabase Studio
-- Os 5 arquivos soltos `*.txt` na raiz do app (credenciais de referência) estão no `.gitignore` — **nunca remover essas linhas**; eles serão apagados pelo usuário depois de migrados para o painel (fase 4)
+- Arquivos soltos de credencial (Meta, GA4, Supabase) ficam só em `apps/tracking.negou.net/.credenciais-locais/`, uma pasta com regra própria e isolada no `.gitignore` (`/.credenciais-locais/`) — **nunca remover essa linha**, e nunca criar um `.txt`/`.json` de segredo fora dessa pasta. Eles serão apagados pelo usuário depois de migrados para o painel (fase 4) e para `.env.local` (infra do Supabase, já feito)
 
 ### Código
 
@@ -108,7 +125,7 @@ apps/tracking.negou.net/
 ## Fases (commit + aprovação do usuário ao final de cada uma)
 
 1. ✅ **Fundação** — scaffold Next.js/React, Tailwind + shadcn/ui, design tokens, `.gitignore`, `CLAUDE.md`
-2. ⏳ Banco de dados e segurança (migrations, RLS, Vault, pg_cron)
+2. ✅ **Banco de dados e segurança** — migrations (7 tabelas, RLS, Vault, pg_cron) escritas; aplicação no Supabase é manual pelo usuário (ver "Banco de dados" acima) — aguardando confirmação de que `verify_phase2.sql` rodou limpo
 3. ⏳ Autenticação e shell do dashboard
 4. ⏳ Painel de configurações (CRUD credenciais + testar conexão)
 5. ⏳ Captura de eventos (`/api/identify`, `/api/event`, script cliente)
@@ -122,9 +139,11 @@ apps/tracking.negou.net/
 
 Estas ações exigem login nas contas do próprio usuário e não podem ser feitas por aqui:
 
-- **Criar o projeto Supabase** (supabase.com/dashboard → New Project) e me passar `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` e `SUPABASE_SERVICE_ROLE_KEY` (via `.env.local`, nunca colados no chat em texto plano se puder evitar) antes da fase 2.
-- **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — isso pode esperar até a fase 10, mas pode ser feito antes se você preferir já ter o preview deploy rodando fase a fase.
-- Habilitar as extensões `pgcrypto`, `pgsodium`/Vault e `pg_cron` no projeto Supabase (feito via migration na fase 2, mas a *ativação* do Vault também tem um passo de UI em Database → Vault).
+- ✅ ~~Criar o projeto Supabase~~ — feito; URL/anon/service_role em `.env.local`.
+- **Rodar as 5 migrations da fase 2** no SQL Editor do Supabase, na ordem, e depois `supabase/verify_phase2.sql` — se algum bloco der erro (em especial o de Vault), colar o erro aqui.
+- Se o arquivo de Vault falhar: habilitar "Supabase Vault" em Database → Extensions no painel e rodar de novo.
+- **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase.
+- Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
 
 ---
 
@@ -156,3 +175,5 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 ## Histórico
 
 - **2026-09-16:** Fase 1 concluída — scaffold Next.js 16.3.5/React 19.2.8, Tailwind v4 + shadcn/ui (Radix, preset nova), design tokens HSL (verde-neon/ciano/âmbar, dark padrão + toggle claro), fontes Manrope + JetBrains Mono, `.gitignore` protegendo os `.txt` de credencial soltos, página placeholder demonstrando o design system.
+- **2026-09-16:** Projeto Supabase criado pelo usuário; URL/anon/service_role movidos para `.env.local`. Os 8 arquivos de credencial soltos (Meta, GA4, Supabase) consolidados em `.credenciais-locais/`, uma única pasta gitignorada — mais robusto do que listar nomes exatos.
+- **2026-09-16:** Fase 2 (migrations) escrita — 5 arquivos SQL em `supabase/migrations/` (extensões, tabelas, RLS, funções de Vault, job de retenção) + `supabase/verify_phase2.sql`. Aplicação é manual (colar no SQL Editor do Supabase), por decisão do usuário de não compartilhar um Personal Access Token/senha de banco novo.
