@@ -52,8 +52,13 @@ apps/tracking.negou.net/
 │   ├── supabase/service.ts                 # ✅ fase 3 — cliente service_role, `server-only`
 │   ├── supabase/proxy.ts                   # ✅ fase 3 — updateSession() usado pelo proxy.ts da raiz
 │   ├── auth/actions.ts                     # ✅ fase 3 — signIn/signOut (Server Actions)
-│   ├── crypto/{vault,webhook-token}.ts     # [fase 4]
-│   ├── meta/capi.ts                        # [fase 6] META_GRAPH_API_VERSION numa constante única
+│   ├── auth/require-user.ts                # ✅ fase 4 — guarda obrigatória de toda Server Action
+│   ├── crypto/vault.ts                     # ✅ fase 4 — única porta para os segredos cifrados
+│   ├── crypto/webhook-token.ts             # ✅ fase 4 — gera/hash/compara em tempo constante
+│   ├── settings/{config,queries}.ts        # ✅ fase 4 — os 3 tipos de conta parametrizados
+│   ├── connections/test-connection.ts      # ✅ fase 4 — testes reais de Meta e GA4
+│   ├── meta/constants.ts                   # ✅ fase 4 — META_GRAPH_API_VERSION (constante única)
+│   ├── meta/capi.ts                        # [fase 6] disparo de evento
 │   ├── ga4/mp.ts                           # [fase 6]
 │   ├── geo.ts                              # [fase 5] headers x-vercel-ip-*
 │   ├── rate-limit.ts                       # [fase 5]
@@ -120,6 +125,25 @@ apps/tracking.negou.net/
 
 ---
 
+## Credenciais e destinos (fase 4 — implementado)
+
+- **Segredos são write-only.** Depois de salvo, o valor nunca volta pra tela: a UI mostra só "guardado cifrado no Vault" e oferece substituir. `lib/settings/queries.ts` nem seleciona o `*_vault_id` pra fora do servidor. O único momento em que um segredo é decifrado é dentro do teste de conexão ou do disparo de evento, e ele é descartado logo em seguida.
+- **Toda Server Action começa com `requireUser()`** (`lib/auth/require-user.ts`). Isso NÃO é redundante com o proxy nem com o layout: uma Server Action é na prática um endpoint HTTP público, e quem descobrir o id dela pode chamá-la sem passar por página nenhuma. Nunca escreva uma action de configuração sem essa primeira linha.
+- **Os 3 tipos de conta são um só código**, parametrizado por `lib/settings/config.ts` (tabela, coluna do ID público, coluna do Vault, regex, rótulos). Para adicionar um tipo novo, acrescente uma entrada lá.
+- **`select("*")` em vez de lista de colunas** nas queries parametrizadas: o cliente do Supabase valida a string de select em tempo de compilação e quebra com nome de coluna montado dinamicamente. O mapeamento em TypeScript é que decide o que sai.
+- **Ordem ao remover:** apaga a linha da tabela primeiro, depois `delete_secret`. Se o insert falhar depois de gravar no Vault, o segredo órfão é apagado no catch — senão ficaria lixo cifrado acumulando.
+- **`webhook_token`:** gerado com 32 bytes aleatórios, mostrado uma vez e persistido só como SHA-256. Não existe forma de recuperá-lo; perdeu, gera outro e recadastra na plataforma.
+
+### Testar conexão — o que cada teste realmente prova
+
+Isto foi verificado contra as APIs reais, não suposto. Vale ler antes de mexer:
+
+- **Meta Pixel (CAPI):** o teste ENVIA um evento PageView de verdade, com `test_event_code`, e confere `events_received`. Por quê: um token de CAPI (system user) normalmente **não** tem permissão de ler os metadados do pixel — testado, devolve `(#100) Missing Permission` com um token perfeitamente válido. Um teste por leitura daria falso negativo. O `test_event_code` garante que o evento fica só na aba Test Events e não entra em produção nem na atribuição.
+- **Conta de anúncio:** leitura de `name,account_status,currency` funciona (o token de Ads tem `ads_read`), e é a mesma chamada que a fase 9 vai usar. `account_status != 1` devolve "parcial": o token funciona, quem está com problema é a conta.
+- **GA4:** o endpoint de validação do Measurement Protocol **não valida credenciais** — testado com `api_secret` inválido e com `measurement_id` inexistente: os dois devolvem HTTP 200 e zero mensagens. Ele só valida o formato do evento (nome reservado, `client_id` faltando, etc. são pegos). Por isso o melhor resultado possível do GA4 é **"parcial"**, nunca verde: um "conectado" que mente é pior do que não ter teste. A confirmação real é ver o evento no DebugView do GA4.
+
+---
+
 ## Convenções
 
 ### Git & Commits
@@ -150,7 +174,7 @@ apps/tracking.negou.net/
 1. ✅ **Fundação** — scaffold Next.js/React, Tailwind + shadcn/ui, design tokens, `.gitignore`, `CLAUDE.md`
 2. ✅ **Banco de dados e segurança** — migrations (7 tabelas, RLS, Vault, pg_cron) aplicadas no Supabase e verificadas em 2026-09-16 (`verify_phase2.sql` passou limpo + conferência independente via REST API)
 3. ✅ **Autenticação e shell do dashboard** — `proxy.ts` (sessão + guarda), login email/senha, layout autenticado com navegação responsiva, toggle de tema, e leitura autenticada real na Visão geral provando RLS
-4. ⏳ Painel de configurações (CRUD credenciais + testar conexão)
+4. ✅ **Painel de configurações** — CRUD das 3 tabelas de conta com segredos write-only no Vault, token de webhook mostrado uma vez, e teste de conexão por conta (ver "Credenciais e destinos")
 5. ⏳ Captura de eventos (`/api/identify`, `/api/event`, script cliente)
 6. ⏳ Disparo Meta CAPI + GA4 Measurement Protocol
 7. ⏳ Webhook de compra (PerfectPay primeiro)
@@ -200,5 +224,6 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 - **2026-09-16:** Fase 1 concluída — scaffold Next.js 16.3.5/React 19.2.8, Tailwind v4 + shadcn/ui (Radix, preset nova), design tokens HSL (verde-neon/ciano/âmbar, dark padrão + toggle claro), fontes Manrope + JetBrains Mono, `.gitignore` protegendo os `.txt` de credencial soltos, página placeholder demonstrando o design system.
 - **2026-09-16:** Projeto Supabase criado pelo usuário; URL/anon/service_role movidos para `.env.local`. Os 8 arquivos de credencial soltos (Meta, GA4, Supabase) consolidados em `.credenciais-locais/`, uma única pasta gitignorada — mais robusto do que listar nomes exatos.
 - **2026-09-16:** Fase 2 (migrations) escrita — 5 arquivos SQL em `supabase/migrations/` (extensões, tabelas, RLS, funções de Vault, job de retenção) + `supabase/verify_phase2.sql`. Aplicação é manual (colar no SQL Editor do Supabase), por decisão do usuário de não compartilhar um Personal Access Token/senha de banco novo.
+- **2026-09-16:** Fase 4 — painel de configurações. CRUD dos 3 tipos de conta com segredos write-only no Vault, token de webhook gerado/mostrado uma vez e guardado só como hash, e teste de conexão por conta. Constante `META_GRAPH_API_VERSION = v26.0` (confirmada no changelog oficial: lançada 29/07/2026). Testes de contrato contra o banco real (store/reveal/update/delete no Vault, CHECK de formato, unique 23505, trigger de updated_at) passaram e o banco ficou limpo.
 - **2026-09-16:** Fase 3 — autenticação e shell do painel. `proxy.ts` (nome novo do middleware no Next 16) cuidando de refresh de sessão, headers anti-cache e guarda de rota; login por email/senha via Server Action; layout autenticado com sidebar responsiva, menu de conta e toggle de tema; Visão geral fazendo leitura autenticada real das 3 tabelas pra provar o caminho sessão → RLS → dado. Guarda verificada por HTTP: `/`, `/eventos` e `/configuracoes` sem sessão devolvem 307 para `/login`.
 - **2026-09-16:** Fase 2 aplicada e verificada no projeto Supabase. `verify_phase2.sql` passou limpo, e uma conferência independente pela REST API confirmou: as 7 tabelas existem; a chave `anon` leva 401 em `ga4_accounts` (revoke funcionando) e lê `visitors` com lista vazia (RLS filtrando); `reveal_secret` e `purge_old_event_payloads` respondem via RPC com `service_role`.
