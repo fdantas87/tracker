@@ -125,7 +125,7 @@ apps/tracking.negou.net/
 ## Fases (commit + aprovação do usuário ao final de cada uma)
 
 1. ✅ **Fundação** — scaffold Next.js/React, Tailwind + shadcn/ui, design tokens, `.gitignore`, `CLAUDE.md`
-2. ✅ **Banco de dados e segurança** — migrations (7 tabelas, RLS, Vault, pg_cron) escritas; aplicação no Supabase é manual pelo usuário (ver "Banco de dados" acima) — aguardando confirmação de que `verify_phase2.sql` rodou limpo
+2. ✅ **Banco de dados e segurança** — migrations (7 tabelas, RLS, Vault, pg_cron) aplicadas no Supabase e verificadas em 2026-09-16 (`verify_phase2.sql` passou limpo + conferência independente via REST API)
 3. ⏳ Autenticação e shell do dashboard
 4. ⏳ Painel de configurações (CRUD credenciais + testar conexão)
 5. ⏳ Captura de eventos (`/api/identify`, `/api/event`, script cliente)
@@ -140,8 +140,8 @@ apps/tracking.negou.net/
 Estas ações exigem login nas contas do próprio usuário e não podem ser feitas por aqui:
 
 - ✅ ~~Criar o projeto Supabase~~ — feito; URL/anon/service_role em `.env.local`.
-- **Rodar as 5 migrations da fase 2** no SQL Editor do Supabase, na ordem, e depois `supabase/verify_phase2.sql` — se algum bloco der erro (em especial o de Vault), colar o erro aqui.
-- Se o arquivo de Vault falhar: habilitar "Supabase Vault" em Database → Extensions no painel e rodar de novo.
+- ✅ ~~Rodar as 5 migrations da fase 2 + `verify_phase2.sql`~~ — feito e verificado (Vault já vinha habilitado no projeto, não precisou de passo extra em Database → Extensions).
+- **Criar um usuário do painel** no Supabase Studio (Authentication → Users → Add user, com email e senha) — necessário pra testar o login na fase 3. Não existe tela de cadastro no app, de propósito.
 - **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase.
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
 
@@ -177,3 +177,4 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 - **2026-09-16:** Fase 1 concluída — scaffold Next.js 16.3.5/React 19.2.8, Tailwind v4 + shadcn/ui (Radix, preset nova), design tokens HSL (verde-neon/ciano/âmbar, dark padrão + toggle claro), fontes Manrope + JetBrains Mono, `.gitignore` protegendo os `.txt` de credencial soltos, página placeholder demonstrando o design system.
 - **2026-09-16:** Projeto Supabase criado pelo usuário; URL/anon/service_role movidos para `.env.local`. Os 8 arquivos de credencial soltos (Meta, GA4, Supabase) consolidados em `.credenciais-locais/`, uma única pasta gitignorada — mais robusto do que listar nomes exatos.
 - **2026-09-16:** Fase 2 (migrations) escrita — 5 arquivos SQL em `supabase/migrations/` (extensões, tabelas, RLS, funções de Vault, job de retenção) + `supabase/verify_phase2.sql`. Aplicação é manual (colar no SQL Editor do Supabase), por decisão do usuário de não compartilhar um Personal Access Token/senha de banco novo.
+- **2026-09-16:** Fase 2 aplicada e verificada no projeto Supabase. `verify_phase2.sql` passou limpo, e uma conferência independente pela REST API confirmou: as 7 tabelas existem; a chave `anon` leva 401 em `ga4_accounts` (revoke funcionando) e lê `visitors` com lista vazia (RLS filtrando); `reveal_secret` e `purge_old_event_payloads` respondem via RPC com `service_role`.
