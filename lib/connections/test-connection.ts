@@ -51,13 +51,17 @@ async function fetchWithTimeout(url: string, init?: RequestInit) {
  * Testa um pixel do Meta enviando um evento de TESTE pela Conversions API.
  *
  * Por que enviar evento em vez de só ler os dados do pixel: um token de CAPI
- * (system user) normalmente NÃO tem permissão de ler os metadados do pixid —
+ * (system user) normalmente NÃO tem permissão de ler os metadados do pixel —
  * verificado na prática, devolve "(#100) Missing Permission" mesmo com um
  * token perfeitamente válido. Ou seja, o teste por leitura dá falso negativo.
  * O único teste fiel é exercitar o endpoint que o sistema realmente usa.
  *
- * O evento vai com `test_event_code`, então aparece só na aba Test Events do
- * Events Manager e não entra nos dados de produção nem na atribuição.
+ * SOBRE O ISOLAMENTO DE PRODUÇÃO — corrigido depois de ver na prática:
+ * o `test_event_code` só isola o evento de verdade quando é um código REAL,
+ * gerado pela aba "Eventos de teste" do Events Manager daquele pixel. Um
+ * código inventado não corresponde a nenhuma sessão de teste e o evento
+ * aparece na atividade de produção. Por isso o resultado avisa, quando não há
+ * código configurado, que o evento pode contar como real.
  */
 export async function testMetaPixelConnection(params: {
   pixelId: string
@@ -73,9 +77,8 @@ export async function testMetaPixelConnection(params: {
     }
   }
 
-  // Sem código de teste configurado, usa um marcador nosso — o importante é
-  // que o evento NUNCA saia sem test_event_code, pra não sujar produção.
-  const testEventCode = params.testEventCode?.trim() || "NEGOU_TESTE"
+  const configuredCode = params.testEventCode?.trim() || null
+  const testEventCode = configuredCode ?? "NEGOU_TESTE"
 
   const payload = {
     data: [
@@ -123,7 +126,10 @@ export async function testMetaPixelConnection(params: {
       return {
         status: "ok",
         message: `Evento de teste aceito pelo pixel (${body.events_received} recebido).`,
-        detail: `Aparece em Events Manager → Test Events com o código ${testEventCode}. Não entra em produção.`,
+        detail: configuredCode
+          ? `Para vê-lo, abra Events Manager → Eventos de teste com o código ${configuredCode} ANTES de testar: aquela tela é um monitor ao vivo e não mostra o que chegou antes de ela abrir.`
+          : "Atenção: não há código de teste configurado em Geral, então este evento provavelmente contou como produção. " +
+            "Para testar sem afetar seus dados, pegue o código na aba Eventos de teste do Events Manager e salve em Configurações → Geral.",
       }
     }
 
