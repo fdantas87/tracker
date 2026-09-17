@@ -42,9 +42,9 @@ apps/tracking.negou.net/
 │   ├── layout.tsx                          # ✅ fase 1/3 — fontes, ThemeProvider, TooltipProvider
 │   ├── globals.css                         # ✅ fase 1 — tokens HSL, gradiente, glass, tabular-nums
 │   └── api/
-│       ├── identify/route.ts               # [fase 5]
-│       ├── event/route.ts                  # [fase 5]
-│       ├── config/public/route.ts          # [fase 5]
+│       ├── identify/route.ts               # ✅ fase 5 — upsert do visitante
+│       ├── event/route.ts                  # ✅ fase 5 — log com dedup por event_id
+│       ├── config/public/route.ts          # ✅ fase 5 — só IDs públicos, pro track.js
 │       └── webhook/compra/[platform]/route.ts   # [fase 7]
 ├── lib/
 │   ├── supabase/env.ts                     # ✅ fase 3 — leitura validada das env vars
@@ -60,8 +60,11 @@ apps/tracking.negou.net/
 │   ├── meta/constants.ts                   # ✅ fase 4 — META_GRAPH_API_VERSION (constante única)
 │   ├── meta/capi.ts                        # [fase 6] disparo de evento
 │   ├── ga4/mp.ts                           # [fase 6]
-│   ├── geo.ts                              # [fase 5] headers x-vercel-ip-*
-│   ├── rate-limit.ts                       # [fase 5]
+│   ├── geo.ts                              # ✅ fase 5 — IP real + headers x-vercel-ip-*
+│   ├── rate-limit.ts                       # ✅ fase 5 — Upstash quando configurado, memória senão
+│   ├── cors.ts                             # ✅ fase 5 — allowlist exata dos endpoints públicos
+│   ├── validation.ts                       # ✅ fase 5 — limpeza de tudo que entra
+│   ├── crypto/hash.ts                      # ✅ fase 5 — normalização + SHA-256 do Meta
 │   └── webhooks/adapters/{index,perfectpay}.ts   # [fase 7]
 ├── components/
 │   ├── ui/                                 # ✅ shadcn (button, card, badge, separator, switch, sidebar, sheet, dropdown-menu, input, label, alert, tooltip, skeleton)
@@ -71,7 +74,8 @@ apps/tracking.negou.net/
 │   ├── theme-provider.tsx                  # ✅ fase 1
 │   └── theme-toggle.tsx                    # ✅ fase 1
 ├── hooks/use-mobile.ts                     # ✅ fase 3 — reescrito com useSyncExternalStore (ver "Autenticação e shell")
-├── public/track.js                         # [fase 5] snippet embutível para lp.negou.net/quiz.negou.net
+├── public/track.js                         # ✅ fase 5 — script embutível nos sites (identidade, gtag, pixel, decoração de links)
+├── scripts/check-server-actions.mjs        # ✅ fase 4 — roda no build, ver "Credenciais e destinos"
 └── supabase/
     ├── migrations/                          # ✅ fase 2 — SQL das 7 tabelas + RLS + Vault + pg_cron
     └── verify_phase2.sql                    # ✅ fase 2 — queries de verificação (roda manual, não é migration)
@@ -147,6 +151,23 @@ Isto foi verificado contra as APIs reais, não suposto. Vale ler antes de mexer:
 
 ---
 
+## Captura de eventos (fase 5 — implementado)
+
+Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) e o `public/track.js`, que é o script embutido nos sites.
+
+- **O `event_id` nasce no navegador, nunca no servidor.** O mesmo id vai no `fbq(..., { eventID })` e na chamada ao `/api/event`. É só isso que faz o Meta entender que o evento do Pixel e o da Conversions API são o mesmo — se o servidor gerasse o seu, todo evento contaria em dobro. `/api/event` devolve 400 se o `event_id` não vier; ele valida, não inventa.
+- **O que o cliente manda e o que o servidor decide.** IP, user agent e geo são resolvidos SEMPRE no servidor, a partir dos headers, e um valor desses vindo no corpo é ignorado (tem teste cobrindo isso). Confiar no cliente aqui seria entregar a geolocalização pra quem quisesse forjar.
+- **Campo nulo não apaga o que já existe.** No `/api/identify`, só os campos preenchidos entram no upsert. Numa segunda visita sem UTM na URL, a origem da primeira visita é preservada — que é o comportamento certo pra atribuição.
+- **`/api/event` cria o visitante se ele não existir.** `events_log.trck_user_id` tem FK pra `visitors`; um evento pode chegar antes do identify (corrida de rede, aba restaurada). Criar a linha mínima é melhor do que descartar o evento.
+- **Dedup por `event_id` único**, com `ignoreDuplicates` (vira `on conflict do nothing`). Reenvio do mesmo evento devolve 200 com `duplicated: true`, sem criar linha nova.
+- **CORS com allowlist fechada e comparação exata.** Nada de `*` e nada de `endsWith(".negou.net")` — `negou.net.site-do-atacante.com` passaria no endsWith. Tem teste com esse domínio exato.
+- **Sem cookie entre domínios.** O `track.js` lê o que precisa (trck_user_id, `_fbp`/`_fbc`, `_ga`, `_ga_<id>`) no próprio site e manda tudo explicitamente no corpo. Isso dispensa `Access-Control-Allow-Credentials` e toda a fragilidade de cookie cross-site — menos superfície e menos coisa pra quebrar quando navegador mudar política.
+- **Cross-domain é por URL.** O `track.js` decora automaticamente links de checkout (PerfectPay) com `?tuid=` e links de WhatsApp com o id dentro do texto da mensagem, inclusive em links criados depois (MutationObserver). É isso que permite casar a compra com a visita na fase 7.
+- **`keepalive: true` no envio.** O InitiateCheckout dispara um instante antes de o navegador sair da página; sem keepalive a requisição é cancelada no meio e o evento se perde justo no passo mais valioso do funil.
+- **Rate limit:** `lib/rate-limit.ts` usa Upstash Redis por HTTP puro quando `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` existem, e cai pra contador em memória quando não existem. **O modo memória não protege de verdade em produção** — cada função serverless é um processo isolado, então o contador não é compartilhado. Provisionar o Upstash está nas pendências. Em qualquer falha do Redis a decisão é deixar passar: limitador com problema não pode derrubar a captura do site.
+
+---
+
 ## Convenções
 
 ### Git & Commits
@@ -178,7 +199,7 @@ Isto foi verificado contra as APIs reais, não suposto. Vale ler antes de mexer:
 2. ✅ **Banco de dados e segurança** — migrations (7 tabelas, RLS, Vault, pg_cron) aplicadas no Supabase e verificadas em 2026-09-16 (`verify_phase2.sql` passou limpo + conferência independente via REST API)
 3. ✅ **Autenticação e shell do dashboard** — `proxy.ts` (sessão + guarda), login email/senha, layout autenticado com navegação responsiva, toggle de tema, e leitura autenticada real na Visão geral provando RLS
 4. ✅ **Painel de configurações** — CRUD das 3 tabelas de conta com segredos write-only no Vault, token de webhook mostrado uma vez, e teste de conexão por conta (ver "Credenciais e destinos")
-5. ⏳ Captura de eventos (`/api/identify`, `/api/event`, script cliente)
+5. ✅ **Captura de eventos** — `/api/config/public`, `/api/identify`, `/api/event` e `public/track.js`, com CORS fechado, validação, geo no servidor, dedup por `event_id` e rate limit (ver "Captura de eventos")
 6. ⏳ Disparo Meta CAPI + GA4 Measurement Protocol
 7. ⏳ Webhook de compra (PerfectPay primeiro)
 8. ⏳ Dashboard: Visão geral, Eventos, Faturamento, Geo
@@ -192,7 +213,9 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - ✅ ~~Criar o projeto Supabase~~ — feito; URL/anon/service_role em `.env.local`.
 - ✅ ~~Rodar as 5 migrations da fase 2 + `verify_phase2.sql`~~ — feito e verificado (Vault já vinha habilitado no projeto, não precisou de passo extra em Database → Extensions).
 - ✅ ~~Criar um usuário do painel no Supabase Studio~~ — feito; 2 contas cadastradas, ambas com email confirmado.
+- **Provisionar o Upstash Redis** (plano gratuito serve) e colocar `UPSTASH_REDIS_REST_URL` e `UPSTASH_REDIS_REST_TOKEN` no `.env.local` e na Vercel. Sem isso o rate limit dos endpoints públicos cai pro modo memória, que **não** protege contra abuso distribuído (cada função serverless é um processo isolado). O código já está pronto: é só existir a variável. Item obrigatório da auditoria da fase 10.
 - **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase.
+- **Instalar o `track.js` nos sites** depois do deploy: `<script src="https://tracking.negou.net/track.js" defer></script>` em `lp.negou.net` (e nos outros subdomínios que devam ser rastreados).
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
 
 ---
@@ -227,6 +250,7 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 - **2026-09-16:** Fase 1 concluída — scaffold Next.js 16.3.5/React 19.2.8, Tailwind v4 + shadcn/ui (Radix, preset nova), design tokens HSL (verde-neon/ciano/âmbar, dark padrão + toggle claro), fontes Manrope + JetBrains Mono, `.gitignore` protegendo os `.txt` de credencial soltos, página placeholder demonstrando o design system.
 - **2026-09-16:** Projeto Supabase criado pelo usuário; URL/anon/service_role movidos para `.env.local`. Os 8 arquivos de credencial soltos (Meta, GA4, Supabase) consolidados em `.credenciais-locais/`, uma única pasta gitignorada — mais robusto do que listar nomes exatos.
 - **2026-09-16:** Fase 2 (migrations) escrita — 5 arquivos SQL em `supabase/migrations/` (extensões, tabelas, RLS, funções de Vault, job de retenção) + `supabase/verify_phase2.sql`. Aplicação é manual (colar no SQL Editor do Supabase), por decisão do usuário de não compartilhar um Personal Access Token/senha de banco novo.
+- **2026-09-17:** Fase 5 — captura de eventos. `/api/config/public` (só IDs públicos), `/api/identify` (upsert do visitante, hashes do Meta, geo no servidor) e `/api/event` (dedup por `event_id` nascido no navegador), mais o `public/track.js`: resolve identidade, carrega gtag e Pixel com os IDs do painel, decora links de checkout/WhatsApp e dispara PageView. 33 testes de integração contra o servidor e o banco reais — incluindo CORS recusando `negou.net.site-do-atacante.com`, geo forjado pelo cliente sendo ignorado, hashes batendo com a normalização do Meta e dedup de reenvio — passaram, e o banco ficou limpo.
 - **2026-09-16:** Fase 4 — painel de configurações. CRUD dos 3 tipos de conta com segredos write-only no Vault, token de webhook gerado/mostrado uma vez e guardado só como hash, e teste de conexão por conta. Constante `META_GRAPH_API_VERSION = v26.0` (confirmada no changelog oficial: lançada 29/07/2026). Testes de contrato contra o banco real (store/reveal/update/delete no Vault, CHECK de formato, unique 23505, trigger de updated_at) passaram e o banco ficou limpo.
 - **2026-09-16:** Fase 3 — autenticação e shell do painel. `proxy.ts` (nome novo do middleware no Next 16) cuidando de refresh de sessão, headers anti-cache e guarda de rota; login por email/senha via Server Action; layout autenticado com sidebar responsiva, menu de conta e toggle de tema; Visão geral fazendo leitura autenticada real das 3 tabelas pra provar o caminho sessão → RLS → dado. Guarda verificada por HTTP: `/`, `/eventos` e `/configuracoes` sem sessão devolvem 307 para `/login`.
 - **2026-09-16:** Fase 2 aplicada e verificada no projeto Supabase. `verify_phase2.sql` passou limpo, e uma conferência independente pela REST API confirmou: as 7 tabelas existem; a chave `anon` leva 401 em `ga4_accounts` (revoke funcionando) e lê `visitors` com lista vazia (RLS filtrando); `reveal_secret` e `purge_old_event_payloads` respondem via RPC com `service_role`.
