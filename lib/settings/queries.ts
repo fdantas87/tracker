@@ -2,6 +2,7 @@ import "server-only"
 
 import { createServiceClient } from "@/lib/supabase/service"
 import { ACCOUNT_CONFIG, type AccountKind } from "./config"
+import { isDispatchMode, type DispatchMode } from "./dispatch-modes"
 
 /**
  * Leitura das tabelas de configuração.
@@ -25,6 +26,23 @@ export type SettingsRow = {
   testEventCode: string | null
   hasWebhookToken: boolean
   updatedAt: string
+  // Fase 7.5 — disparo atrasado
+  dispatchMode: DispatchMode
+  dispatchDelaySeconds: number
+  dispatchImmediateEvents: string[]
+  formCaptureEnabled: boolean
+  defaultPhoneCountry: string
+  dispatchCronUrl: string | null
+  hasCronToken: boolean
+}
+
+export type QueueDepth = {
+  /** Eventos esperando a janela de atraso. */
+  pending: number
+  /** Já venceram e ainda não saíram — se isto cresce, o cron parou. */
+  due: number
+  /** Desistimos depois de 5 tentativas. */
+  failed: number
 }
 
 export async function listAccounts(kind: AccountKind): Promise<AccountRow[]> {
@@ -59,7 +77,7 @@ export async function getSettings(): Promise<SettingsRow | null> {
 
   const { data, error } = await supabase
     .from("settings")
-    .select("currency, test_event_code, webhook_token_hash, updated_at")
+    .select("*")
     .eq("id", true)
     .maybeSingle()
 
@@ -75,5 +93,40 @@ export async function getSettings(): Promise<SettingsRow | null> {
     // bruto não existe em lugar nenhum depois de gerado.
     hasWebhookToken: Boolean(data.webhook_token_hash),
     updatedAt: data.updated_at,
+    dispatchMode: isDispatchMode(data.dispatch_mode)
+      ? data.dispatch_mode
+      : "adaptive",
+    dispatchDelaySeconds: Number(data.dispatch_delay_seconds ?? 900),
+    dispatchImmediateEvents: Array.isArray(data.dispatch_immediate_events)
+      ? (data.dispatch_immediate_events as string[])
+      : [],
+    formCaptureEnabled: Boolean(data.form_capture_enabled),
+    defaultPhoneCountry: String(data.default_phone_country ?? "55"),
+    dispatchCronUrl: data.dispatch_cron_url ?? null,
+    // Mesma regra do token do webhook: informa que existe, nunca o valor.
+    hasCronToken: Boolean(data.dispatch_cron_token_vault_id),
+  }
+}
+
+/**
+ * Profundidade da fila de disparo.
+ *
+ * `due` é o número que importa: são eventos que já deviam ter saído. Se ele
+ * cresce, o pg_cron parou de chamar o endpoint — e sem este indicador essa
+ * falha seria completamente silenciosa.
+ */
+export async function getQueueDepth(): Promise<QueueDepth | null> {
+  const supabase = createServiceClient()
+  const { data, error } = await supabase.rpc("event_queue_depth")
+
+  if (error || !data) return null
+
+  const row = Array.isArray(data) ? data[0] : data
+  if (!row) return null
+
+  return {
+    pending: Number(row.pending ?? 0),
+    due: Number(row.due ?? 0),
+    failed: Number(row.failed ?? 0),
   }
 }

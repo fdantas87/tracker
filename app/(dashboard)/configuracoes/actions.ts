@@ -32,6 +32,12 @@ import {
   isAccountKind,
   type AccountKind,
 } from "@/lib/settings/config"
+import { invalidateDispatchConfig } from "@/lib/settings/dispatch-config"
+import {
+  MAX_DELAY_SECONDS,
+  isDispatchMode,
+  parseImmediateEvents,
+} from "@/lib/settings/dispatch-modes"
 
 const CURRENCIES = ["BRL", "USD", "EUR"] as const
 
@@ -143,6 +149,129 @@ export async function regenerateWebhookToken(): Promise<ActionState> {
     )
   } catch (error) {
     return fail(toMessage(error, "Falha ao gerar o token."))
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Disparo atrasado (fase 7.5)
+// ---------------------------------------------------------------------------
+
+export async function saveDispatchSettings(
+  _prev: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  try {
+    await requireUser()
+
+    const mode = String(formData.get("dispatch_mode") ?? "")
+    if (!isDispatchMode(mode)) {
+      return fail("Modo de disparo inválido.")
+    }
+
+    // A tela pede minutos porque é assim que a pessoa pensa na janela; o banco
+    // guarda segundos porque é a unidade do resto do sistema.
+    const minutes = Number(formData.get("dispatch_delay_minutes"))
+    if (!Number.isFinite(minutes) || minutes < 0) {
+      return fail("A janela precisa ser um número de minutos.")
+    }
+    const delaySeconds = Math.round(minutes * 60)
+    if (delaySeconds > MAX_DELAY_SECONDS) {
+      return fail(`A janela não pode passar de ${MAX_DELAY_SECONDS / 60} minutos.`)
+    }
+
+    const immediate = parseImmediateEvents(
+      String(formData.get("dispatch_immediate_events") ?? "")
+    )
+    if (!Array.isArray(immediate)) {
+      return fail(immediate.error)
+    }
+
+    const phoneCountry = String(formData.get("default_phone_country") ?? "").trim()
+    if (!/^[0-9]{1,3}$/.test(phoneCountry)) {
+      return fail("O código do país precisa ter de 1 a 3 dígitos (Brasil = 55).")
+    }
+
+    const cronUrlRaw = String(formData.get("dispatch_cron_url") ?? "").trim()
+    if (cronUrlRaw) {
+      try {
+        const parsed = new URL(cronUrlRaw)
+        if (parsed.protocol !== "https:" && parsed.hostname !== "localhost") {
+          return fail("A URL do cron precisa ser https.")
+        }
+      } catch {
+        return fail("URL do cron inválida.")
+      }
+    }
+
+    const supabase = createServiceClient()
+    const { error } = await supabase
+      .from("settings")
+      .update({
+        dispatch_mode: mode,
+        dispatch_delay_seconds: delaySeconds,
+        dispatch_immediate_events: immediate,
+        form_capture_enabled: formData.get("form_capture_enabled") === "on",
+        default_phone_country: phoneCountry,
+        dispatch_cron_url: cronUrlRaw || null,
+      })
+      .eq("id", true)
+
+    if (error) return fail(`Não foi possível salvar: ${error.message}`)
+
+    // Sem isto a mudança demoraria até 60s pra valer (o memo do módulo).
+    invalidateDispatchConfig()
+    revalidatePath("/configuracoes")
+    return succeed("Configurações de disparo salvas.")
+  } catch (error) {
+    return fail(toMessage(error, "Falha ao salvar."))
+  }
+}
+
+/**
+ * Gera o token que o pg_cron usa pra chamar /api/cron/dispatch.
+ *
+ * Diferente do token do webhook, este vai pro Vault em vez de virar hash: o
+ * pg_cron precisa LER o valor bruto pra mandar no header. Guardando só no
+ * Vault, uma representação só existe, e trocar o token aqui já vale no próximo
+ * tique sem editar SQL nenhum.
+ */
+export async function regenerateCronToken(): Promise<ActionState> {
+  try {
+    await requireUser()
+
+    const supabase = createServiceClient()
+    const { data: current } = await supabase
+      .from("settings")
+      .select("dispatch_cron_token_vault_id")
+      .eq("id", true)
+      .maybeSingle()
+
+    const token = generateWebhookToken()
+    const existingVaultId = current?.dispatch_cron_token_vault_id
+
+    if (existingVaultId) {
+      await updateSecret(String(existingVaultId), token)
+    } else {
+      const vaultId = await storeSecret(token, `cron_dispatch_${Date.now()}`)
+      const { error } = await supabase
+        .from("settings")
+        .update({ dispatch_cron_token_vault_id: vaultId })
+        .eq("id", true)
+
+      // Se a linha não aceitou o id, o segredo ficaria órfão no Vault.
+      if (error) {
+        await deleteSecret(vaultId).catch(() => {})
+        return fail(`Não foi possível gravar: ${error.message}`)
+      }
+    }
+
+    revalidatePath("/configuracoes")
+    return succeed(
+      "Token do cron gerado. O pg_cron lê o valor direto do Vault, então não é preciso colar em lugar nenhum.",
+      token
+    )
+  } catch (error) {
+    return fail(toMessage(error, "Falha ao gerar o token do cron."))
   }
 }
 

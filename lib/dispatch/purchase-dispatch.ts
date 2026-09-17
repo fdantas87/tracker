@@ -11,6 +11,7 @@ import {
 } from "@/lib/crypto/hash"
 import { sendToAllGa4 } from "@/lib/ga4/mp"
 import { sendToAllPixels } from "@/lib/meta/capi"
+import { getDispatchConfig } from "@/lib/settings/dispatch-config"
 import { createServiceClient } from "@/lib/supabase/service"
 import type { NormalizedPurchase } from "@/lib/webhooks/adapters/types"
 
@@ -48,18 +49,15 @@ export async function dispatchPurchase(
   const { purchase, eventId, visitor } = params
   const supabase = createServiceClient()
 
-  const { data: settings } = await supabase
-    .from("settings")
-    .select("test_event_code")
-    .eq("id", true)
-    .maybeSingle()
+  const config = await getDispatchConfig()
 
   // Dados do comprador vindos da plataforma valem mais que os do visitante:
   // são o que ele digitou no checkout, confirmados pelo pagamento.
   const emailHash =
     hashEmail(purchase.buyerEmail) ?? asString(visitor?.email_hash)
   const phoneHash =
-    hashPhone(purchase.buyerPhone) ?? asString(visitor?.phone_hash)
+    hashPhone(purchase.buyerPhone, config.defaultPhoneCountry) ??
+    asString(visitor?.phone_hash)
 
   // GA4: reusa o client_id e o session_id capturados na visita, pra a compra
   // cair na sessão certa em vez de virar tráfego direto órfão.
@@ -74,7 +72,7 @@ export async function dispatchPurchase(
       eventId,
       eventTime: Math.floor(Date.now() / 1000),
       actionSource: "website",
-      testEventCode: settings?.test_event_code ?? null,
+      testEventCode: config.testEventCode,
       customData: {
         value: purchase.amount,
         currency: purchase.currency,

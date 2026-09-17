@@ -1,22 +1,23 @@
 import { after } from "next/server"
 
 import { jsonResponse, preflightResponse } from "@/lib/cors"
-import { dispatchBrowserEvent } from "@/lib/dispatch/event-dispatch"
+import { dispatchEventNow } from "@/lib/dispatch/event-dispatch"
 import { getGeo, toInetOrNull } from "@/lib/geo"
 import {
   CAPTURE_RULE,
   checkRateLimit,
   rateLimitHeaders,
 } from "@/lib/rate-limit"
-import type { MetaCustomData } from "@/lib/meta/capi"
+import {
+  getDispatchConfig,
+  resolveDispatchDelayMs,
+} from "@/lib/settings/dispatch-config"
 import { createServiceClient } from "@/lib/supabase/service"
 import {
   LIMITS,
-  cleanAmount,
   cleanEventName,
   cleanJson,
   cleanString,
-  cleanStringArray,
   cleanUrl,
   cleanUtms,
   readJsonBody,
@@ -25,7 +26,7 @@ import {
 /**
  * POST /api/event
  *
- * Registra um evento em `events_log`.
+ * Registra um evento em `events_log` e decide QUANDO ele vai pro Meta.
  *
  * O `event_id` é OBRIGATÓRIO e nasce no navegador — o mesmo id vai pro
  * `fbq(..., { eventID })` e pra cá. É isso que permite o Meta deduplicar o
@@ -33,8 +34,11 @@ import {
  * próprio, os dois lados nunca casariam e todo evento contaria em dobro.
  * Por isso aqui ele é validado, nunca inventado.
  *
- * O disparo pro Meta e pro GA4 entra na fase 6. Nesta fase o evento é só
- * capturado e guardado.
+ * A partir da fase 7.5 o envio pode ser ATRASADO (ver lib/dispatch/
+ * event-dispatch.ts): o evento espera numa fila enquanto a conversão de fundo
+ * de funil não chega, e sai enriquecido com email/telefone/nome. Quando o
+ * navegador já disparou o pixel (`pixel_fired`), o envio é imediato — atrasar
+ * aí garantiria a perda, porque o Meta descarta o evento que chega depois.
  */
 
 /**
@@ -44,6 +48,11 @@ import {
  * 30s dá folga confortável.
  */
 export const maxDuration = 30
+
+/** Limite do Meta pro event_time: 7 dias. 6 deixa margem pra fila e retries. */
+const MAX_EVENT_AGE_MS = 6 * 24 * 60 * 60 * 1000
+/** Relógio de cliente adiantado é comum; mais que isso é lixo. */
+const MAX_EVENT_FUTURE_MS = 5 * 60 * 1000
 
 export async function OPTIONS(request: Request) {
   return preflightResponse(request)
@@ -88,8 +97,14 @@ export async function POST(request: Request) {
   const utms = cleanUtms(body)
   const customData = cleanJson(body.custom_data)
   const eventSourceUrl = cleanUrl(body.event_source_url)
+  const pixelFired = body.pixel_fired === true
+  const eventTime = resolveEventTime(body.event_time)
 
   try {
+    const config = await getDispatchConfig()
+    const delayMs = resolveDispatchDelayMs(config, eventName, pixelFired)
+    const dispatchAfter = new Date(Date.now() + delayMs)
+
     const supabase = createServiceClient()
 
     // `events_log.trck_user_id` tem FK pra `visitors`. Um evento pode chegar
@@ -125,11 +140,16 @@ export async function POST(request: Request) {
           event_name: eventName,
           event_id: eventId,
           ...utms,
-          // payload_meta guarda o que veio do navegador até a fase 6 preencher
-          // com o payload real enviado à Conversions API.
-          payload_meta: customData
-            ? { custom_data: customData, event_source_url: eventSourceUrl }
-            : null,
+          // Colunas próprias, não dentro de payload_meta: o disparo atrasado
+          // precisa delas intactas na hora de montar o payload, e o
+          // payload_meta é sobrescrito com o que foi enviado ao Meta.
+          event_time: eventTime.toISOString(),
+          event_source_url: eventSourceUrl,
+          custom_data: customData,
+          action_source: "website",
+          pixel_fired: pixelFired,
+          dispatch_status: "pending",
+          dispatch_after: dispatchAfter.toISOString(),
           ip: toInetOrNull(geo.ip),
           geo_country: geo.country,
           geo_region: geo.region,
@@ -146,29 +166,25 @@ export async function POST(request: Request) {
     // Sem linha devolvida = era duplicata. O cliente não precisa saber a
     // diferença, mas devolvemos pra facilitar depuração.
     const duplicated = !data || data.length === 0
+    const queued = delayMs > 0
 
-    // Dispara pro Meta DEPOIS de responder: `after()` do Next roda o callback
-    // com a resposta já entregue, então a ida e volta até o Meta não atrasa o
-    // carregamento da página. Diferente de um fire-and-forget solto, a Vercel
-    // mantém a função viva até este trabalho terminar.
+    // Envio imediato acontece DEPOIS de responder: `after()` do Next roda o
+    // callback com a resposta já entregue, então a ida e volta até o Meta não
+    // atrasa o carregamento da página. Diferente de um fire-and-forget solto,
+    // a Vercel mantém a função viva até este trabalho terminar.
     //
-    // Duplicata não redispara: o evento original já foi (ou está sendo)
-    // enviado, e reenviar seria contar duas vezes.
-    if (!duplicated) {
+    // Duplicata não redispara, e evento enfileirado não é enviado aqui: quem
+    // cuida dele é o cron. As duas pontas reivindicam a linha atomicamente,
+    // então nem uma corrida entre elas manda o evento duas vezes.
+    if (!duplicated && !queued) {
       after(async () => {
-        await dispatchBrowserEvent({
-          trckUserId,
-          eventId,
-          eventName,
-          eventSourceUrl,
-          customData: toMetaCustomData(customData),
-        })
+        await dispatchEventNow(eventId)
       })
     }
 
     return jsonResponse(
       request,
-      { ok: true, event_id: eventId, duplicated },
+      { ok: true, event_id: eventId, duplicated, queued },
       200,
       rateLimitHeaders(limit)
     )
@@ -178,26 +194,20 @@ export async function POST(request: Request) {
 }
 
 /**
- * Converte o `custom_data` solto que veio do navegador nos campos que a
- * Conversions API entende. Só passa o que reconhecemos e validamos — o resto
- * do objeto fica guardado no log, mas não é repassado ao Meta.
+ * O momento em que o evento aconteceu no navegador.
+ *
+ * Relógio de cliente não é confiável, mas é a única fonte do instante real —
+ * e com a fila o `created_at` já não serve, porque o envio pode acontecer
+ * muito depois. Então aceitamos o valor do cliente dentro de uma faixa sã e
+ * caímos pro relógio do servidor em qualquer coisa fora dela.
  */
-function toMetaCustomData(
-  customData: Record<string, unknown> | null
-): MetaCustomData | null {
-  if (!customData) return null
+function resolveEventTime(value: unknown): Date {
+  const now = Date.now()
+  const parsed = typeof value === "number" ? value : Number(value)
 
-  const mapped: MetaCustomData = {
-    value: cleanAmount(customData.value),
-    currency: cleanString(customData.currency, 8),
-    contentIds: cleanStringArray(customData.content_ids),
-    contentName: cleanString(customData.content_name),
-    contentType: cleanString(customData.content_type, 32),
-    orderId: cleanString(customData.order_id, LIMITS.id),
-  }
+  if (!Number.isFinite(parsed)) return new Date(now)
+  if (parsed > now + MAX_EVENT_FUTURE_MS) return new Date(now)
+  if (parsed < now - MAX_EVENT_AGE_MS) return new Date(now)
 
-  const hasValue = Object.values(mapped).some(
-    (value) => value !== null && value !== undefined
-  )
-  return hasValue ? mapped : null
+  return new Date(parsed)
 }

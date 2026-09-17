@@ -43,6 +43,13 @@ export const CAPTURE_RULE: RateLimitRule = { limit: 60, windowSeconds: 60 }
 /** Webhook tem volume legítimo baixo. */
 export const WEBHOOK_RULE: RateLimitRule = { limit: 30, windowSeconds: 60 }
 
+/**
+ * Tique da fila: o pg_cron chama uma vez por minuto. O teto de 10 existe só
+ * pra um token vazado não conseguir multiplicar invocações da função — a
+ * reivindicação atômica já garante que nada é enviado duas vezes.
+ */
+export const CRON_RULE: RateLimitRule = { limit: 10, windowSeconds: 60 }
+
 export async function checkRateLimit(
   scope: string,
   identifier: string,

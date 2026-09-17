@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto"
 
+import { after } from "next/server"
+
 import { jsonResponse, preflightResponse } from "@/lib/cors"
+import { drainEventQueue } from "@/lib/dispatch/event-dispatch"
 import { getGeo, toInetOrNull } from "@/lib/geo"
 import { hashEmail, hashName, hashPhone } from "@/lib/crypto/hash"
 import {
@@ -8,6 +11,7 @@ import {
   checkRateLimit,
   rateLimitHeaders,
 } from "@/lib/rate-limit"
+import { getDispatchConfig } from "@/lib/settings/dispatch-config"
 import { createServiceClient } from "@/lib/supabase/service"
 import {
   LIMITS,
@@ -21,14 +25,26 @@ import {
  * POST /api/identify
  *
  * Cria ou atualiza o visitante. Chamado pelo track.js no primeiro carregamento
- * de cada página.
+ * de cada página e sempre que o site souber quem é a pessoa
+ * (`negou.identify({...})` ou um formulário enviado).
  *
  * O que o CLIENTE manda: trck_user_id (se já tiver), fbp, fbc, cookies do GA,
  * UTMs, referrer e, quando existirem, dados de contato.
  * O que o SERVIDOR resolve sozinho (e nunca aceita do cliente): IP real,
  * user agent e geo. Confiar no cliente para esses seria entregar a chave da
  * geolocalização e do IP para quem quisesse forjar.
+ *
+ * A resposta devolve `identified`, que é o que o track.js usa pra decidir se
+ * dispara o pixel do navegador (fase 7.5). Ele NÃO pode vir de
+ * /api/config/public: aquele endpoint responde com `Cache-Control: public`, e
+ * um CDN serviria o estado de um visitante pra todos os outros.
  */
+
+/**
+ * O `after()` daqui pode disparar a fila inteira de um visitante quando a PII
+ * chega. 30s é a mesma folga do /api/event.
+ */
+export const maxDuration = 30
 
 export async function OPTIONS(request: Request) {
   return preflightResponse(request)
@@ -67,13 +83,18 @@ export async function POST(request: Request) {
   const firstName = cleanString(body.first_name, LIMITS.shortText)
   const lastName = cleanString(body.last_name, LIMITS.shortText)
 
+  // Só a chegada de dado pessoal libera a fila. Um identify de pageview comum
+  // (a esmagadora maioria das chamadas) não traz nada e não dispara nada.
+  const hasPii = Boolean(email || phone || firstName || lastName)
+
+  const config = await getDispatchConfig()
   const utms = cleanUtms(body)
 
   const row = {
     trck_user_id: trckUserId,
     email,
     email_hash: hashEmail(email),
-    phone_hash: hashPhone(phone),
+    phone_hash: hashPhone(phone, config.defaultPhoneCountry),
     first_name_hash: hashName(firstName),
     last_name_hash: hashName(lastName),
     fbp: cleanString(body.fbp, LIMITS.id),
@@ -103,17 +124,50 @@ export async function POST(request: Request) {
 
   try {
     const supabase = createServiceClient()
-    const { error } = await supabase
+
+    // O `.select()` no próprio upsert devolve o estado DEPOIS da escrita, que
+    // é exatamente o que o navegador precisa saber ("este visitante já tem
+    // dado pessoal?"). Uma ida ao banco só.
+    const { data: saved, error } = await supabase
       .from("visitors")
       .upsert(payload, { onConflict: "trck_user_id" })
+      .select("email_hash, phone_hash")
+      .maybeSingle()
 
     if (error) {
       return jsonResponse(request, { error: "persist_failed" }, 500)
     }
 
+    const identified = Boolean(saved?.email_hash || saved?.phone_hash)
+
+    if (hasPii) {
+      // Primeira vez que a identidade aparece. `is null` preserva a semântica
+      // de primeiro toque: um segundo formulário não reescreve a data.
+      await supabase
+        .from("visitors")
+        .update({ identified_at: new Date().toISOString() })
+        .eq("trck_user_id", trckUserId)
+        .is("identified_at", null)
+
+      // LIBERAÇÃO ANTECIPADA: o motivo do atraso já aconteceu. Não faz sentido
+      // o PageView continuar esperando quando o dado que ele ia ganhar já está
+      // gravado. Adianta a fila deste visitante e drena na sequência.
+      after(async () => {
+        try {
+          await supabase.rpc("flush_visitor_events", {
+            p_trck_user_id: trckUserId,
+          })
+          await drainEventQueue(50)
+        } catch {
+          // Falha aqui só significa que os eventos saem no tique normal do
+          // cron, ainda dentro da janela. Nunca pode quebrar o identify.
+        }
+      })
+    }
+
     return jsonResponse(
       request,
-      { trck_user_id: trckUserId },
+      { trck_user_id: trckUserId, identified },
       200,
       rateLimitHeaders(limit)
     )

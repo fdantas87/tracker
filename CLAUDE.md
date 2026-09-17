@@ -42,9 +42,10 @@ apps/tracking.negou.net/
 │   ├── layout.tsx                          # ✅ fase 1/3 — fontes, ThemeProvider, TooltipProvider
 │   ├── globals.css                         # ✅ fase 1 — tokens HSL, gradiente, glass, tabular-nums
 │   └── api/
-│       ├── identify/route.ts               # ✅ fase 5 — upsert do visitante
-│       ├── event/route.ts                  # ✅ fase 5 — log com dedup por event_id
+│       ├── identify/route.ts               # ✅ fase 5 — upsert do visitante (+ 7.5: devolve `identified`, libera a fila)
+│       ├── event/route.ts                  # ✅ fase 5 — log com dedup por event_id (+ 7.5: decide atraso)
 │       ├── config/public/route.ts          # ✅ fase 5 — só IDs públicos, pro track.js
+│       ├── cron/dispatch/route.ts          # ✅ fase 7.5 — drena a fila, chamado pelo pg_cron
 │       └── webhook/compra/[platform]/route.ts   # ✅ fase 7 — token, idempotência, vinculação
 ├── lib/
 │   ├── supabase/env.ts                     # ✅ fase 3 — leitura validada das env vars
@@ -58,9 +59,13 @@ apps/tracking.negou.net/
 │   ├── settings/{config,queries}.ts        # ✅ fase 4 — os 3 tipos de conta parametrizados
 │   ├── connections/test-connection.ts      # ✅ fase 4 — testes reais de Meta e GA4
 │   ├── meta/constants.ts                   # ✅ fase 4 — META_GRAPH_API_VERSION (constante única)
-│   ├── meta/capi.ts                        # ✅ fase 6 — payload + fan-out pros pixels ativos
+│   ├── meta/capi.ts                        # ✅ fase 6 — payload + fan-out (+ 7.5: envio em lote)
+│   ├── meta/custom-data.ts                 # ✅ fase 7.5 — custom_data do navegador -> campos da CAPI
 │   ├── ga4/mp.ts                           # ✅ fase 6 — Measurement Protocol (só o webhook usa)
-│   ├── dispatch/event-dispatch.ts          # ✅ fase 6 — enriquece com o visitor e grava a resposta
+│   ├── dispatch/event-dispatch.ts          # ✅ fase 7.5 — fila: reivindica, enriquece, envia em lote
+│   ├── dispatch/visitor-enrich.ts          # ✅ fase 7.5 — PII da compra -> visitors, e libera a fila
+│   ├── settings/dispatch-modes.ts          # ✅ fase 7.5 — modos e rótulos (módulo comum)
+│   ├── settings/dispatch-config.ts         # ✅ fase 7.5 — config memorizada + regra do atraso
 │   ├── geo.ts                              # ✅ fase 5 — IP real + headers x-vercel-ip-*
 │   ├── rate-limit.ts                       # ✅ fase 5 — Upstash quando configurado, memória senão
 │   ├── cors.ts                             # ✅ fase 5 — allowlist exata dos endpoints públicos
@@ -70,6 +75,7 @@ apps/tracking.negou.net/
 │   └── dispatch/purchase-dispatch.ts       # ✅ fase 7 — Purchase pro Meta + GA4
 ├── components/
 │   ├── ui/                                 # ✅ shadcn (button, card, badge, separator, switch, sidebar, sheet, dropdown-menu, input, label, alert, tooltip, skeleton)
+│   ├── settings/dispatch-tab.tsx           # ✅ fase 7.5 — modo, janela, formulários, token do cron, fila
 │   ├── dashboard-sidebar.tsx               # ✅ fase 3 — navegação (drawer no celular, sidebar no desktop)
 │   ├── user-menu.tsx                       # ✅ fase 3 — conta + sair
 │   ├── page-header.tsx                     # ✅ fase 3 — cabeçalho e placeholder de fase
@@ -80,7 +86,9 @@ apps/tracking.negou.net/
 ├── scripts/check-server-actions.mjs        # ✅ fase 4 — roda no build, ver "Credenciais e destinos"
 └── supabase/
     ├── migrations/                          # ✅ fase 2 — SQL das 7 tabelas + RLS + Vault + pg_cron
-    └── verify_phase2.sql                    # ✅ fase 2 — queries de verificação (roda manual, não é migration)
+    │                                        #    fase 5 — rate_limits; fase 7.5 — event_queue
+    ├── verify_phase2.sql                    # ✅ fase 2 — queries de verificação (roda manual, não é migration)
+    └── verify_phase7_5.sql                  # ✅ fase 7.5 — 11 checagens da fila (roda manual)
 ```
 
 ---
@@ -201,6 +209,36 @@ Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) 
 
 ---
 
+## Disparo atrasado com retroalimentação (fase 7.5 — implementado)
+
+No instante do PageView o sistema só conhece cookie, IP e geo. Email, nome e telefone só aparecem quando a pessoa converte — e aí o evento de topo de funil já foi enviado. O Meta não deixa atualizar evento recebido, então o dado se perdia pra sempre. Agora o evento espera numa fila no Postgres (padrão 15 min); a conversão grava a PII no visitante nesse meio-tempo, e o disparo sai enriquecido.
+
+- **A retroalimentação é quase de graça** porque `event-dispatch.ts` sempre montou o `user_data` lendo `visitors` **no momento do envio**. Atrasar o envio foi o suficiente — nenhum payload é reescrito.
+- **A regra do Meta que define a arquitetura inteira**, verificada na doc antes de desenhar: *"If we find the same server key combination (`event_id` and `event_name`) and browser key combination (`eventID` and `event`) sent to the same Pixel ID within 48 hours, **we discard the subsequent events**"* e *"we generally prefer the event that is received first"*. A dedup **já funcionava**; o problema nunca foi ela falhar, e sim qual dos dois sobrevive — o do navegador, porque chega primeiro. Pixel na hora + CAPI 15 min depois com o mesmo `event_id` não conta em dobro, mas descarta justamente o evento enriquecido. **Não "conserte" isso fazendo o pixel voltar a disparar sempre**: seria desligar o ganho da fase inteira.
+- **Por isso o `track.js` decide por evento** (modo `adaptive`, o padrão): visitante anônimo → o `fbq('track')` **não** é chamado e o evento vai pra fila; visitante já identificado → não há o que esperar, então o pixel dispara e a CAPI vai junto, na hora. Nunca existem dois eventos com o mesmo id chegando em janelas diferentes. Os outros modos são `server_only` (o pixel nunca dispara; maior correspondência) e `hybrid` (experimental: pixel na hora E CAPI atrasada, pra medir se o Meta prefere o evento mais rico quando eles "diferem significativamente" — caso que a doc não cobre).
+- **`pixel_fired` vem do navegador e manda no atraso.** É a única parte que sabe se já existe um evento igual a caminho do Meta. O servidor não tenta adivinhar: se o pixel disparou, a CAPI vai imediatamente.
+- **`event_time` é o momento REAL do evento**, gravado em coluna própria e enviado ao Meta. Usar `Date.now()` na hora do envio (como era antes) faria um evento atrasado parecer ter acontecido 15 minutos depois, jogando a atribuição pra frente. O Meta aceita até 7 dias de defasagem.
+- **Evento velho envenena o lote inteiro.** A doc: *"If any `event_time` in `data` is greater than 7 days in the past, we return an error for the **entire request** and process no events"*. Por isso `claim_pending_events` marca como `skipped` tudo com mais de 6 dias **antes** de montar qualquer lote. Sem isso, um evento esquecido derrubaria os eventos novos junto.
+- **Um caminho só até o Meta.** Tanto o envio imediato (`dispatchEventNow`) quanto o do cron (`drainEventQueue`) reivindicam a linha atomicamente (`pending` → `sending`). É isso que torna impossível enviar o mesmo evento duas vezes, mesmo com o cron e a requisição original correndo juntos. Não acrescente um segundo caminho de envio.
+- **Falha parcial não volta pra fila.** Só quando TODOS os pixels falham a linha é reagendada (backoff 1/5/15/60 min, `failed` na 5ª tentativa). Se um pixel deu certo e outro não, reenviar mandaria o evento de novo pro que funcionou.
+- **Quem acorda a fila é o pg_cron + pg_net**, chamando `/api/cron/dispatch` de minuto em minuto. Nenhum serviço novo — mesma decisão que tirou o Redis do rate limit. O cron da Vercel exigiria um `vercel.json` (que o projeto não tem) e, no Hobby, roda 1x por dia.
+- **O endpoint responde 202 ANTES de trabalhar**, e faz o envio no `after()`. O pg_net é fire-and-forget e derruba a conexão no timeout dele; o `after()` é o que mantém a função viva ("`after` will run for the platform's default or configured max duration of your route").
+- **O token do cron vive só no Vault.** O pg_cron lê o valor bruto com `reveal_secret` pra mandar no header; o endpoint compara em tempo constante. Uma representação, uma fonte de verdade — trocar o token no painel vale no próximo tique, sem editar SQL.
+- **Liberação antecipada:** quando a conversão grava a PII (webhook de compra ou `/api/identify` com dado pessoal), `flush_visitor_events` adianta a fila daquele visitante. Quem converte não espera a janela inteira.
+- **O enriquecimento do webhook roda ANTES do retorno de status não-aprovado.** Um boleto/Pix apenas gerado já traz o email do comprador, e é essa PII que os eventos na fila estão esperando — dias antes de a venda ser aprovada. Sair cedo ali desperdiçaria o melhor momento do funil.
+- **`fill_visitor_pii` só preenche buraco, nunca sobrescreve.** O visitante pode ter um valor melhor (digitado pela própria pessoa); o webhook é fonte de segunda mão. É o inverso do `/api/identify`, onde o valor mais novo deve ganhar. A função devolve o que preencheu, então a mesma ida ao banco responde "vale liberar a fila?".
+- **`identified` NÃO pode sair do `/api/config/public`.** Aquele endpoint responde com `Cache-Control: public, max-age=60` — um CDN serviria o estado de um visitante pra todos os outros. Ele viaja na resposta do `/api/identify`, que é `no-store`.
+- **BUG CORRIGIDO: o `hashPhone` não punha o código do país.** O comentário dizia "com código do país", o código só tirava não-dígitos e zeros à esquerda. Um celular digitado como `(11) 98765-4321` virava `11987654321` e nunca batia com o `5511987654321` que o Meta espera — sem erro nenhum, só correspondência zero. Agora há `normalizePhone(valor, país)`: 10 ou 11 dígitos = nacional e recebe o país (o que resolve até o DDD 55 de Santa Maria/RS); 12 ou 13 já começando com o país ficam como estão. **Todo `phone_hash` gravado antes disso é inútil pro Meta** — não há como recuperá-los, mas o volume era de desenvolvimento.
+- **Captura de formulário:** o caminho principal é o site chamar `negou.identify({...})`. O farejador de `submit`/clique é a rede de segurança. A **lista de proibições vem primeiro e é definitiva**: `type=password`, `hidden`, `file`, `autocomplete^="cc-"`, qualquer nome batendo senha/cartão/CVV/CPF/código, valor que passa no Luhn com 13-19 dígitos, e `data-negou-ignore`. Formulário que contém campo de senha é ignorado **por inteiro** (é tela de login: nada a ganhar, tudo a perder), e o mesmo vale pra formulário cujo `action` aponta pro checkout. Email é conferido antes de telefone, pra um campo chamado "email" com dígitos nunca ser lido como telefone.
+- **O `_fbp` é gerado por nós quando não existe**, antes de carregar o `fbevents.js`. Com o `fbq('track')` suprimido não dá pra contar que o script do Meta grave o cookie, e quem bloqueia o `fbevents` por extensão nunca teria `_fbp` nenhum. Gravar **antes** é o que evita o pior caso: o fbevents acha o cookie pronto e reaproveita, em vez de criar um segundo valor — dois `_fbp` pro mesmo navegador derrubariam a correspondência.
+- **O `init()` do `track.js` virou assíncrono** (espera o `/api/identify` com teto de 800 ms). Isso habilita o modo adaptativo e, de quebra, corrige um defeito que já existia: o PageView chegava ao servidor antes de `fbp`/`fbc`/geo serem gravados. Como `init` agora espera, um `negou.track()` chamado cedo é enfileirado localmente, e o `pagehide` esvazia essa fila na hora pra quem sai antes do teto.
+
+### ⚠️ Ordem obrigatória: migration ANTES do deploy
+
+`/api/event` grava as colunas novas. **Sem a migration aplicada, ele devolve 500 e a captura para por completo** — verificado na prática, não suposto. Diferente do rate limit (que falha aberto de propósito), aqui não há como degradar sem duplicar todo o caminho de disparo, e duplicá-lo abriria a porta pro envio em dobro. Então: rode a migration no SQL Editor **primeiro**, depois faça o deploy.
+
+---
+
 ## Convenções
 
 ### Git & Commits
@@ -235,7 +273,8 @@ Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) 
 5. ✅ **Captura de eventos** — `/api/config/public`, `/api/identify`, `/api/event` e `public/track.js`, com CORS fechado, validação, geo no servidor, dedup por `event_id` e rate limit (ver "Captura de eventos")
 6. ✅ **Disparo Meta CAPI + GA4 Measurement Protocol** — envio para todos os destinos ativos via `after()`, com a resposta de cada um gravada no log do evento (ver "Disparo server-side"). O módulo do GA4 está pronto mas só é chamado pelo webhook, na fase 7.
 7. ✅ **Webhook de compra** — `/api/webhook/compra/[platform]` com adaptador do PerfectPay, vinculação da venda com a visita, idempotência com trava atômica e Purchase disparado pro Meta e pro GA4 (ver "Webhook de compra")
-8. ⏳ Dashboard: Visão geral, Eventos, Faturamento, Geo
+7.5. ✅ **Disparo atrasado com retroalimentação** — fila no Postgres, modo híbrido adaptativo no `track.js`, captura de formulário, enriquecimento do visitante pela compra e pg_cron drenando a fila (ver "Disparo atrasado")
+8. ⏳ Dashboard: Visão geral, Eventos, Faturamento, Geo — **mostrar `dispatch_status`, `dispatch_attempts` e `dispatch_error`** na tela de Eventos: é o que responde "esse evento saiu?" sem abrir o banco
 9. ⏳ Campanhas (Meta Ads Insights + ROAS/CPA)
 10. ⏳ Auditoria de segurança e publicação
 
@@ -247,7 +286,11 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - ✅ ~~Rodar as 5 migrations da fase 2 + `verify_phase2.sql`~~ — feito e verificado (Vault já vinha habilitado no projeto, não precisou de passo extra em Database → Extensions).
 - ✅ ~~Criar um usuário do painel no Supabase Studio~~ — feito; 2 contas cadastradas, ambas com email confirmado.
 - ✅ ~~Limpar o `test_event_code`~~ — feito pelo usuário em 2026-09-17, confirmado no banco (`null`). Se voltar a preencher pra testar, lembrar de limpar de novo: enquanto tiver valor, nenhum evento conta pra atribuição ou otimização.
-- **Rodar a migration `20260917170000_rate_limits.sql`** no SQL Editor do Supabase. Até lá o rate limit falha aberto (os endpoints funcionam, só não há limite). Não precisa de Upstash nem de nenhum serviço novo.
+- ✅ ~~Rodar a migration `20260917170000_rate_limits.sql`~~ — feito; confirmado em 2026-09-17 via REST (`bump_rate_limit` responde 200).
+- **Fase 7.5 — 3 passos, nesta ordem:**
+  1. Supabase → Database → Extensions → habilitar **`pg_net`** (é ela que deixa o Postgres chamar uma URL).
+  2. Rodar `migrations/20260917190000_event_queue.sql` no SQL Editor, e depois `verify_phase7_5.sql` pra conferir. **Antes do deploy** — ver o aviso de ordem obrigatória na seção "Disparo atrasado".
+  3. No painel, aba **Disparo**: preencher a URL do cron (`https://tracking.negou.net/api/cron/dispatch`) e gerar o token. Até isso, `tick_event_queue()` sai quieto e a fila não drena.
 - **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase.
 - **Instalar o `track.js` nos sites** depois do deploy: `<script src="https://tracking.negou.net/track.js" defer></script>` em `lp.negou.net` (e nos outros subdomínios que devam ser rastreados).
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
@@ -281,6 +324,10 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-09-17:** Fase 7.5 — disparo atrasado com retroalimentação. Fila de despacho em `events_log` (11 colunas novas + índice parcial), reivindicação atômica com `for update skip locked`, liberação antecipada na conversão, `pg_cron` + `pg_net` acordando `/api/cron/dispatch`, envio em lote de até 50 eventos por requisição, modo híbrido adaptativo no `track.js`, `negou.identify()` + farejador de formulário, e escrita da PII da compra de volta no visitante. Verificado: build e lint limpos, `node --check` no `track.js`, 13/13 casos de normalização de telefone, 15/15 casos do farejador (inclusive PAN com Luhn em campo de telefone, formulário de login e `action` de checkout, todos recusados), painel carregando autenticado nas 3 páginas com a aba nova presente e o usuário temporário apagado, e o `phone_hash` gravado pelo `/api/identify` batendo com o SHA-256 de `5511987654321` contra o banco real. O banco ficou limpo.
+  - **Descoberta que mudou o desenho:** a doc de deduplicação do Meta diz, literalmente, que o evento que chega **depois** é descartado e que ele prefere o que chegou primeiro. Ou seja, atrasar a CAPI mantendo o pixel disparando na hora joga fora justamente o evento enriquecido. A técnica só funciona se o pixel não disparar aquele evento — daí o modo adaptativo.
+  - **Bug pré-existente corrigido:** `hashPhone` nunca punha o código do país, então todo telefone brasileiro gerava um hash que o Meta jamais casaria — silenciosamente. Os `phone_hash` gravados antes disso são inúteis pro Meta.
+  - **Pendência honesta:** nada da fila foi exercitado contra o banco de verdade, porque a migration é aplicada à mão e não há senha de banco nem PAT disponíveis aqui. O que dá pra afirmar é que o código compila, que os endpoints degradam do jeito esperado sem as colunas (`/api/identify` segue 200, `/api/config/public` cai nos padrões) e que `/api/event` devolve 500 — que é justamente por que a migration tem que vir antes do deploy. `verify_phase7_5.sql` cobre os 11 pontos do lado do banco.
 - **2026-09-16:** Fase 1 concluída — scaffold Next.js 16.3.5/React 19.2.8, Tailwind v4 + shadcn/ui (Radix, preset nova), design tokens HSL (verde-neon/ciano/âmbar, dark padrão + toggle claro), fontes Manrope + JetBrains Mono, `.gitignore` protegendo os `.txt` de credencial soltos, página placeholder demonstrando o design system.
 - **2026-09-16:** Projeto Supabase criado pelo usuário; URL/anon/service_role movidos para `.env.local`. Os 8 arquivos de credencial soltos (Meta, GA4, Supabase) consolidados em `.credenciais-locais/`, uma única pasta gitignorada — mais robusto do que listar nomes exatos.
 - **2026-09-16:** Fase 2 (migrations) escrita — 5 arquivos SQL em `supabase/migrations/` (extensões, tabelas, RLS, funções de Vault, job de retenção) + `supabase/verify_phase2.sql`. Aplicação é manual (colar no SQL Editor do Supabase), por decisão do usuário de não compartilhar um Personal Access Token/senha de banco novo.

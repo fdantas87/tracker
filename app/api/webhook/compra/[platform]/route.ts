@@ -3,12 +3,17 @@ import { after } from "next/server"
 import { verifyWebhookToken } from "@/lib/crypto/webhook-token"
 import { hashEmail, hashPhone } from "@/lib/crypto/hash"
 import { dispatchPurchase } from "@/lib/dispatch/purchase-dispatch"
+import {
+  enrichVisitorFromPurchase,
+  flushAndDrain,
+} from "@/lib/dispatch/visitor-enrich"
 import { getGeo } from "@/lib/geo"
 import {
   WEBHOOK_RULE,
   checkRateLimit,
   rateLimitHeaders,
 } from "@/lib/rate-limit"
+import { getDispatchConfig } from "@/lib/settings/dispatch-config"
 import { createServiceClient } from "@/lib/supabase/service"
 import { readJsonBody } from "@/lib/validation"
 import { getAdapter } from "@/lib/webhooks/adapters"
@@ -104,8 +109,10 @@ export async function POST(
   const purchase = parsed.purchase
 
   try {
+    const config = await getDispatchConfig()
+
     // --- 3. vinculação com o visitante -------------------------------------
-    const match = await findVisitor(purchase)
+    const match = await findVisitor(purchase, config.defaultPhoneCountry)
 
     // --- 4. gravação idempotente -------------------------------------------
     // `transaction_id` é UNIQUE. O upsert atualiza a linha quando a mesma
@@ -117,7 +124,7 @@ export async function POST(
         trck_user_id: match.visitor?.trck_user_id ?? null,
         email: purchase.buyerEmail,
         email_hash: hashEmail(purchase.buyerEmail),
-        phone_hash: hashPhone(purchase.buyerPhone),
+        phone_hash: hashPhone(purchase.buyerPhone, config.defaultPhoneCountry),
         product_name: purchase.productName,
         product_id: purchase.productId,
         amount: purchase.amount,
@@ -147,6 +154,28 @@ export async function POST(
         { error: "persist_failed", detail: upsertError.message },
         { status: 500 }
       )
+    }
+
+    // --- 4.5. enriquecimento do visitante (fase 7.5) ------------------------
+    // Vem DEPOIS da gravação (o dinheiro é registrado primeiro, aconteça o que
+    // acontecer aqui) e ANTES do retorno de status não-aprovado — de propósito.
+    // Um boleto/Pix apenas GERADO já traz o email do comprador, e é justamente
+    // essa PII que os eventos parados na fila estão esperando. Sair cedo aqui
+    // desperdiçaria o melhor momento de enriquecimento do funil.
+    const visitorId = match.visitor?.trck_user_id
+      ? String(match.visitor.trck_user_id)
+      : null
+
+    if (visitorId) {
+      const enrichment = await enrichVisitorFromPurchase(
+        visitorId,
+        purchase,
+        config.defaultPhoneCountry
+      )
+
+      if (enrichment.enriched) {
+        after(() => flushAndDrain(visitorId))
+      }
     }
 
     // --- 5. disparo, uma única vez -----------------------------------------
@@ -226,7 +255,8 @@ type VisitorMatch = {
  * onde ela veio seria muito pior do que registrá-la sem atribuição.
  */
 async function findVisitor(
-  purchase: NormalizedPurchase
+  purchase: NormalizedPurchase,
+  defaultPhoneCountry: string
 ): Promise<VisitorMatch> {
   const supabase = createServiceClient()
 
@@ -250,7 +280,7 @@ async function findVisitor(
     if (data && data.length > 0) return { visitor: data[0], method: "email" }
   }
 
-  const phoneHash = hashPhone(purchase.buyerPhone)
+  const phoneHash = hashPhone(purchase.buyerPhone, defaultPhoneCountry)
   if (phoneHash) {
     const { data } = await supabase
       .from("visitors")

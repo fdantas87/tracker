@@ -21,3 +21,13 @@ export const META_GRAPH_API_BASE = `https://graph.facebook.com/${META_GRAPH_API_
  * ou um disparo de evento segure a requisição do usuário indefinidamente.
  */
 export const META_REQUEST_TIMEOUT_MS = 10_000
+
+/**
+ * Quantos eventos vão por requisição quando a fila drena (fase 7.5).
+ *
+ * A doc permite 1.000 ("You can send up to 1,000 events in `data`"), mas 50
+ * é o tamanho escolhido de propósito: mantém cada requisição bem abaixo do
+ * timeout de 10s e limita o estrago de uma falha — o Meta responde por
+ * requisição, não por evento, então um lote que falha leva todos juntos.
+ */
+export const META_MAX_EVENTS_PER_REQUEST = 50

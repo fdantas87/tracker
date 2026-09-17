@@ -33,13 +33,58 @@ export function hashEmail(email: string | null | undefined): string | null {
 }
 
 /**
- * Telefone: só dígitos, com código do país e sem zeros à esquerda.
- * O Meta pede o número em formato internacional sem "+", espaços ou traços.
+ * Telefone: só dígitos, em formato internacional, sem "+", espaços ou traços.
+ *
+ * O CÓDIGO DO PAÍS NÃO É OPCIONAL. O Meta compara o hash do número completo,
+ * então um celular digitado como "(11) 98765-4321" vira "11987654321" e nunca
+ * bate com o "5511987654321" que o Meta espera. Isso não gera erro nenhum —
+ * só zera a correspondência, em silêncio. Era o comportamento daqui antes
+ * desta função existir, e todo phone_hash gravado até então é inútil pro Meta.
+ *
+ * Como o tamanho decide (números brasileiros):
+ * - 10 ou 11 dígitos = número nacional (DDD + assinante) -> recebe o país.
+ *   Isso resolve certo até o caso ambíguo do DDD 55 (Santa Maria/RS):
+ *   "55987654321" tem 11 dígitos, logo é nacional, e vira "5555987654321".
+ * - 12 ou 13 dígitos começando com o código do país = já é internacional.
+ * - Qualquer outro tamanho fica como veio: é um número de outro país, e
+ *   chutar um prefixo estragaria o que já estava certo.
  */
-export function hashPhone(phone: string | null | undefined): string | null {
+export function normalizePhone(
+  phone: string | null | undefined,
+  defaultCountry = "55"
+): string | null {
   if (!phone) return null
+
+  // O zero à esquerda é prefixo de discagem interurbana, não faz parte do
+  // número.
   const digits = phone.replace(/\D/g, "").replace(/^0+/, "")
-  return digits ? sha256(digits) : null
+  if (!digits) return null
+
+  const cc = defaultCountry.replace(/\D/g, "")
+  if (!cc) return digits
+
+  const national = cc.length + 10
+  const nationalLong = cc.length + 11
+
+  if (digits.length === 10 || digits.length === 11) {
+    return cc + digits
+  }
+  if (
+    (digits.length === national || digits.length === nationalLong) &&
+    digits.startsWith(cc)
+  ) {
+    return digits
+  }
+
+  return digits
+}
+
+export function hashPhone(
+  phone: string | null | undefined,
+  defaultCountry = "55"
+): string | null {
+  const normalized = normalizePhone(phone, defaultCountry)
+  return normalized ? sha256(normalized) : null
 }
 
 /** Nome e sobrenome: minúsculo, sem espaços nas pontas. */
