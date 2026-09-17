@@ -17,9 +17,15 @@ export const config = {
    * - /api/*  → endpoints públicos de captura e webhook (fases 5 a 7). Eles
    *   não têm sessão, são de alto volume e não podem ser redirecionados pro
    *   login; rodar o refresh neles seria só latência à toa.
-   * - assets estáticos do Next e arquivos de imagem.
+   * - arquivos estáticos, por extensão.
+   *
+   * ATENÇÃO AO `js` NA LISTA: sem ele, o `/track.js` cai na guarda de sessão e
+   * é redirecionado pro /login com 307. O script de captura simplesmente não
+   * carrega em site nenhum, e nada no painel indica problema — a captura só
+   * para de existir, em silêncio. Aconteceu em produção. Qualquer arquivo novo
+   * servido de `public/` precisa ter a extensão listada aqui.
    */
   matcher: [
-    "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico)$).*)",
+    "/((?!api|_next/static|_next/image|favicon.ico|.*\\.(?:js|mjs|css|map|svg|png|jpg|jpeg|gif|webp|ico|txt|xml|json|woff|woff2|ttf)$).*)",
   ],
 }
