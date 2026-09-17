@@ -263,20 +263,24 @@ begin
     return v_filled;
   end if;
 
+  -- `array_append`, e não `||`: com um literal sem tipo, o `||` é ambíguo
+  -- entre concatenar dois arrays e anexar um elemento, e o Postgres tenta
+  -- interpretar 'email_hash' como um text[] inteiro — "malformed array
+  -- literal". O array_append não tem essa ambiguidade.
   if v_row.email is null and p_email is not null then
-    v_filled := v_filled || 'email';
+    v_filled := array_append(v_filled, 'email');
   end if;
   if v_row.email_hash is null and p_email_hash is not null then
-    v_filled := v_filled || 'email_hash';
+    v_filled := array_append(v_filled, 'email_hash');
   end if;
   if v_row.phone_hash is null and p_phone_hash is not null then
-    v_filled := v_filled || 'phone_hash';
+    v_filled := array_append(v_filled, 'phone_hash');
   end if;
   if v_row.first_name_hash is null and p_first_name_hash is not null then
-    v_filled := v_filled || 'first_name_hash';
+    v_filled := array_append(v_filled, 'first_name_hash');
   end if;
   if v_row.last_name_hash is null and p_last_name_hash is not null then
-    v_filled := v_filled || 'last_name_hash';
+    v_filled := array_append(v_filled, 'last_name_hash');
   end if;
 
   if array_length(v_filled, 1) is null then
