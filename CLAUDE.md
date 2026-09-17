@@ -58,8 +58,9 @@ apps/tracking.negou.net/
 │   ├── settings/{config,queries}.ts        # ✅ fase 4 — os 3 tipos de conta parametrizados
 │   ├── connections/test-connection.ts      # ✅ fase 4 — testes reais de Meta e GA4
 │   ├── meta/constants.ts                   # ✅ fase 4 — META_GRAPH_API_VERSION (constante única)
-│   ├── meta/capi.ts                        # [fase 6] disparo de evento
-│   ├── ga4/mp.ts                           # [fase 6]
+│   ├── meta/capi.ts                        # ✅ fase 6 — payload + fan-out pros pixels ativos
+│   ├── ga4/mp.ts                           # ✅ fase 6 — Measurement Protocol (só o webhook usa)
+│   ├── dispatch/event-dispatch.ts          # ✅ fase 6 — enriquece com o visitor e grava a resposta
 │   ├── geo.ts                              # ✅ fase 5 — IP real + headers x-vercel-ip-*
 │   ├── rate-limit.ts                       # ✅ fase 5 — Upstash quando configurado, memória senão
 │   ├── cors.ts                             # ✅ fase 5 — allowlist exata dos endpoints públicos
@@ -168,6 +169,18 @@ Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) 
 
 ---
 
+## Disparo server-side (fase 6 — implementado)
+
+- **`after()` do Next, não fire-and-forget.** `/api/event` responde ao site na hora e só então dispara pro Meta, dentro de `after()` (`next/server`). Assim a ida e volta até o Meta não atrasa o carregamento da página, e — diferente de uma promise solta — a plataforma mantém a função viva até o trabalho terminar, em vez de congelar o processo e perder o envio.
+- **GA4 NÃO é chamado por `/api/event`, de propósito.** Os eventos do navegador já vão pela gtag; repetir pelo Measurement Protocol contaria tudo em dobro no GA4 e estragaria os relatórios. O MP é reservado pro evento que nasce fora do navegador — a compra do webhook (fase 7). O módulo `lib/ga4/mp.ts` existe e está pronto, mas só o webhook o chama. A spec original tinha uma linha dizendo "dispara pra Meta e GA4" no `/api/event` e outra, mais específica, dizendo que o MP é só pro evento externo e que não se deve duplicar o que já foi pela gtag; a segunda venceu, porque é a correta.
+- **O que é hasheado e o que não é** (verificado campo a campo contra a API real): `em`, `ph`, `fn`, `ln`, `ct`, `st`, `country`, `external_id` vão em SHA-256. `fbp`, `fbc`, `client_ip_address`, `client_user_agent` vão em TEXTO PURO. Hashear esses quatro não gera erro nenhum — só zera a correspondência, silenciosamente.
+- **O `access_token` nunca entra no log.** Ele é injetado só no corpo do `fetch`; o objeto gravado em `payload_meta` é montado sem ele. Tem teste que falha se a palavra aparecer no payload gravado ou se um token no formato do Meta vazar na resposta.
+- **Fan-out independente:** `Promise.allSettled` por pixel, um destino que falha não afeta os outros, e nada lança pra fora — indisponibilidade do Meta não pode derrubar a captura do site. A resposta de CADA destino é gravada em `response_meta` (é o que a tela de Eventos vai mostrar na fase 8).
+- **Duplicata não redispara.** Se o mesmo `event_id` chegar de novo, o evento é reconhecido como duplicado e o disparo não acontece — reenviar contaria duas vezes no Meta.
+- **Campo vazio não é enviado.** `user_data` e `custom_data` só levam chaves com valor: string vazia ou null pioram a correspondência em vez de ajudar.
+
+---
+
 ## Convenções
 
 ### Git & Commits
@@ -200,7 +213,7 @@ Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) 
 3. ✅ **Autenticação e shell do dashboard** — `proxy.ts` (sessão + guarda), login email/senha, layout autenticado com navegação responsiva, toggle de tema, e leitura autenticada real na Visão geral provando RLS
 4. ✅ **Painel de configurações** — CRUD das 3 tabelas de conta com segredos write-only no Vault, token de webhook mostrado uma vez, e teste de conexão por conta (ver "Credenciais e destinos")
 5. ✅ **Captura de eventos** — `/api/config/public`, `/api/identify`, `/api/event` e `public/track.js`, com CORS fechado, validação, geo no servidor, dedup por `event_id` e rate limit (ver "Captura de eventos")
-6. ⏳ Disparo Meta CAPI + GA4 Measurement Protocol
+6. ✅ **Disparo Meta CAPI + GA4 Measurement Protocol** — envio para todos os destinos ativos via `after()`, com a resposta de cada um gravada no log do evento (ver "Disparo server-side"). O módulo do GA4 está pronto mas só é chamado pelo webhook, na fase 7.
 7. ⏳ Webhook de compra (PerfectPay primeiro)
 8. ⏳ Dashboard: Visão geral, Eventos, Faturamento, Geo
 9. ⏳ Campanhas (Meta Ads Insights + ROAS/CPA)
@@ -250,6 +263,7 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 - **2026-09-16:** Fase 1 concluída — scaffold Next.js 16.3.5/React 19.2.8, Tailwind v4 + shadcn/ui (Radix, preset nova), design tokens HSL (verde-neon/ciano/âmbar, dark padrão + toggle claro), fontes Manrope + JetBrains Mono, `.gitignore` protegendo os `.txt` de credencial soltos, página placeholder demonstrando o design system.
 - **2026-09-16:** Projeto Supabase criado pelo usuário; URL/anon/service_role movidos para `.env.local`. Os 8 arquivos de credencial soltos (Meta, GA4, Supabase) consolidados em `.credenciais-locais/`, uma única pasta gitignorada — mais robusto do que listar nomes exatos.
 - **2026-09-16:** Fase 2 (migrations) escrita — 5 arquivos SQL em `supabase/migrations/` (extensões, tabelas, RLS, funções de Vault, job de retenção) + `supabase/verify_phase2.sql`. Aplicação é manual (colar no SQL Editor do Supabase), por decisão do usuário de não compartilhar um Personal Access Token/senha de banco novo.
+- **2026-09-17:** Fase 6 — disparo server-side. `lib/meta/capi.ts` (payload conforme a doc + fan-out pros pixels ativos), `lib/ga4/mp.ts` (pronto, usado só pelo webhook na fase 7) e `lib/dispatch/event-dispatch.ts`, ligado ao `/api/event` via `after()`. Teste ponta a ponta contra a API real do Meta: 26 verificações, com `events_received: 1` confirmado, cada regra de hash conferida campo a campo, e a garantia de que o `access_token` não aparece no log. O `test_event_code` foi definido temporariamente pro teste não sujar produção e restaurado ao valor original no fim.
 - **2026-09-17:** Fase 5 — captura de eventos. `/api/config/public` (só IDs públicos), `/api/identify` (upsert do visitante, hashes do Meta, geo no servidor) e `/api/event` (dedup por `event_id` nascido no navegador), mais o `public/track.js`: resolve identidade, carrega gtag e Pixel com os IDs do painel, decora links de checkout/WhatsApp e dispara PageView. 33 testes de integração contra o servidor e o banco reais — incluindo CORS recusando `negou.net.site-do-atacante.com`, geo forjado pelo cliente sendo ignorado, hashes batendo com a normalização do Meta e dedup de reenvio — passaram, e o banco ficou limpo.
 - **2026-09-16:** Fase 4 — painel de configurações. CRUD dos 3 tipos de conta com segredos write-only no Vault, token de webhook gerado/mostrado uma vez e guardado só como hash, e teste de conexão por conta. Constante `META_GRAPH_API_VERSION = v26.0` (confirmada no changelog oficial: lançada 29/07/2026). Testes de contrato contra o banco real (store/reveal/update/delete no Vault, CHECK de formato, unique 23505, trigger de updated_at) passaram e o banco ficou limpo.
 - **2026-09-16:** Fase 3 — autenticação e shell do painel. `proxy.ts` (nome novo do middleware no Next 16) cuidando de refresh de sessão, headers anti-cache e guarda de rota; login por email/senha via Server Action; layout autenticado com sidebar responsiva, menu de conta e toggle de tema; Visão geral fazendo leitura autenticada real das 3 tabelas pra provar o caminho sessão → RLS → dado. Guarda verificada por HTTP: `/`, `/eventos` e `/configuracoes` sem sessão devolvem 307 para `/login`.

@@ -1,16 +1,22 @@
+import { after } from "next/server"
+
 import { jsonResponse, preflightResponse } from "@/lib/cors"
+import { dispatchBrowserEvent } from "@/lib/dispatch/event-dispatch"
 import { getGeo, toInetOrNull } from "@/lib/geo"
 import {
   CAPTURE_RULE,
   checkRateLimit,
   rateLimitHeaders,
 } from "@/lib/rate-limit"
+import type { MetaCustomData } from "@/lib/meta/capi"
 import { createServiceClient } from "@/lib/supabase/service"
 import {
   LIMITS,
+  cleanAmount,
   cleanEventName,
   cleanJson,
   cleanString,
+  cleanStringArray,
   cleanUrl,
   cleanUtms,
   readJsonBody,
@@ -133,6 +139,25 @@ export async function POST(request: Request) {
     // diferença, mas devolvemos pra facilitar depuração.
     const duplicated = !data || data.length === 0
 
+    // Dispara pro Meta DEPOIS de responder: `after()` do Next roda o callback
+    // com a resposta já entregue, então a ida e volta até o Meta não atrasa o
+    // carregamento da página. Diferente de um fire-and-forget solto, a Vercel
+    // mantém a função viva até este trabalho terminar.
+    //
+    // Duplicata não redispara: o evento original já foi (ou está sendo)
+    // enviado, e reenviar seria contar duas vezes.
+    if (!duplicated) {
+      after(async () => {
+        await dispatchBrowserEvent({
+          trckUserId,
+          eventId,
+          eventName,
+          eventSourceUrl,
+          customData: toMetaCustomData(customData),
+        })
+      })
+    }
+
     return jsonResponse(
       request,
       { ok: true, event_id: eventId, duplicated },
@@ -142,4 +167,29 @@ export async function POST(request: Request) {
   } catch {
     return jsonResponse(request, { error: "persist_failed" }, 500)
   }
+}
+
+/**
+ * Converte o `custom_data` solto que veio do navegador nos campos que a
+ * Conversions API entende. Só passa o que reconhecemos e validamos — o resto
+ * do objeto fica guardado no log, mas não é repassado ao Meta.
+ */
+function toMetaCustomData(
+  customData: Record<string, unknown> | null
+): MetaCustomData | null {
+  if (!customData) return null
+
+  const mapped: MetaCustomData = {
+    value: cleanAmount(customData.value),
+    currency: cleanString(customData.currency, 8),
+    contentIds: cleanStringArray(customData.content_ids),
+    contentName: cleanString(customData.content_name),
+    contentType: cleanString(customData.content_type, 32),
+    orderId: cleanString(customData.order_id, LIMITS.id),
+  }
+
+  const hasValue = Object.values(mapped).some(
+    (value) => value !== null && value !== undefined
+  )
+  return hasValue ? mapped : null
 }
