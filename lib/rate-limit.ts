@@ -1,23 +1,24 @@
 import "server-only"
 
+import { createServiceClient } from "@/lib/supabase/service"
+
 /**
- * Rate limiting dos endpoints públicos (janela fixa).
+ * Rate limiting dos endpoints públicos (janela fixa), no próprio Postgres.
  *
- * Dois modos, escolhidos sozinho pela presença das variáveis de ambiente:
+ * O contador PRECISA ser compartilhado entre instâncias: cada requisição pode
+ * cair numa função serverless diferente, e um contador em memória nunca soma —
+ * o atacante simplesmente bate em instâncias distintas.
  *
- * 1. **Upstash Redis** (`UPSTASH_REDIS_REST_URL` + `UPSTASH_REDIS_REST_TOKEN`).
- *    É o modo correto em produção. Falado por HTTP puro, sem SDK: são duas
- *    chamadas de Redis, não vale uma dependência a mais.
+ * A escolha clássica seria Redis, mas isso é mais um serviço, mais uma conta e
+ * mais duas credenciais pra guardar. O Postgres do Supabase já existe, já é
+ * compartilhado por todas as instâncias e já é consultado nesses mesmos
+ * endpoints — resolve o problema sem nenhuma peça nova. Para o volume de um
+ * negócio, a diferença de desempenho não paga a complexidade operacional.
  *
- * 2. **Memória do processo** (quando as variáveis não estão configuradas).
- *    ATENÇÃO: cada função serverless da Vercel é um processo efêmero e
- *    isolado, então o contador NÃO é compartilhado entre instâncias. Isso
- *    segura rajada de um cliente só contra uma instância, mas não é proteção
- *    real contra abuso distribuído. Serve pra desenvolvimento e como rede de
- *    segurança; antes de ir pra produção, configure o Upstash (tem plano
- *    gratuito) — está anotado nas pendências do CLAUDE.md.
+ * A contagem é uma chamada só, atômica, via `bump_rate_limit` (ver a migration
+ * `..._rate_limits.sql`).
  *
- * Em qualquer falha do Redis a decisão é DEIXAR PASSAR: um problema no
+ * Em qualquer falha do banco a decisão é DEIXAR PASSAR: um problema no
  * limitador não pode derrubar a captura de eventos do site inteiro.
  */
 
@@ -39,106 +40,57 @@ export type RateLimitRule = {
 /** Captura é chamada a cada pageview: generoso, mas com teto. */
 export const CAPTURE_RULE: RateLimitRule = { limit: 60, windowSeconds: 60 }
 
-/** Webhook tem volume legítimo baixo (fase 7). */
+/** Webhook tem volume legítimo baixo. */
 export const WEBHOOK_RULE: RateLimitRule = { limit: 30, windowSeconds: 60 }
-
-const memoryCounters = new Map<string, { count: number; expiresAt: number }>()
-
-function upstashConfig() {
-  const url = process.env.UPSTASH_REDIS_REST_URL
-  const token = process.env.UPSTASH_REDIS_REST_TOKEN
-  return url && token ? { url, token } : null
-}
 
 export async function checkRateLimit(
   scope: string,
   identifier: string,
   rule: RateLimitRule = CAPTURE_RULE
 ): Promise<RateLimitResult> {
+  const now = Math.floor(Date.now() / 1000)
   const windowStart =
-    Math.floor(Date.now() / 1000 / rule.windowSeconds) * rule.windowSeconds
-  const key = `rl:${scope}:${identifier}:${windowStart}`
-  const resetInSeconds = windowStart + rule.windowSeconds - Math.floor(Date.now() / 1000)
+    Math.floor(now / rule.windowSeconds) * rule.windowSeconds
+  const resetInSeconds = windowStart + rule.windowSeconds - now
 
-  const config = upstashConfig()
-  const count = config
-    ? await incrementUpstash(config, key, rule.windowSeconds)
-    : incrementMemory(key, rule.windowSeconds)
+  try {
+    const supabase = createServiceClient()
+    const { data, error } = await supabase.rpc("bump_rate_limit", {
+      p_key: `${scope}:${identifier}`,
+      p_window_seconds: rule.windowSeconds,
+    })
 
-  // null = o Redis falhou. Deixa passar, de propósito.
-  if (count === null) {
-    return { allowed: true, remaining: rule.limit, limit: rule.limit, resetInSeconds }
+    if (error || typeof data !== "number") {
+      return permitir(rule, resetInSeconds)
+    }
+
+    return {
+      allowed: data <= rule.limit,
+      remaining: Math.max(0, rule.limit - data),
+      limit: rule.limit,
+      resetInSeconds,
+    }
+  } catch {
+    return permitir(rule, resetInSeconds)
   }
+}
 
+/** Falha do limitador não pode virar falha da captura. */
+function permitir(rule: RateLimitRule, resetInSeconds: number): RateLimitResult {
   return {
-    allowed: count <= rule.limit,
-    remaining: Math.max(0, rule.limit - count),
+    allowed: true,
+    remaining: rule.limit,
     limit: rule.limit,
     resetInSeconds,
   }
 }
 
-async function incrementUpstash(
-  config: { url: string; token: string },
-  key: string,
-  windowSeconds: number
-): Promise<number | null> {
-  try {
-    const response = await fetch(`${config.url}/pipeline`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${config.token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify([
-        ["INCR", key],
-        // NX: só define a expiração na primeira vez, pra janela não escorregar
-        // pra frente a cada requisição.
-        ["EXPIRE", key, String(windowSeconds), "NX"],
-      ]),
-      signal: AbortSignal.timeout(2000),
-      cache: "no-store",
-    })
-
-    if (!response.ok) return null
-
-    const results = (await response.json()) as { result?: unknown }[]
-    const count = results?.[0]?.result
-    return typeof count === "number" ? count : null
-  } catch {
-    return null
-  }
-}
-
-function incrementMemory(key: string, windowSeconds: number): number {
-  const now = Date.now()
-
-  // Limpeza preguiçosa: sem isso o Map cresceria sem parar em processo longo.
-  if (memoryCounters.size > 10_000) {
-    for (const [existingKey, entry] of memoryCounters) {
-      if (entry.expiresAt <= now) memoryCounters.delete(existingKey)
-    }
-  }
-
-  const current = memoryCounters.get(key)
-  if (!current || current.expiresAt <= now) {
-    memoryCounters.set(key, { count: 1, expiresAt: now + windowSeconds * 1000 })
-    return 1
-  }
-
-  current.count += 1
-  return current.count
-}
-
-export function rateLimitHeaders(result: RateLimitResult): Record<string, string> {
+export function rateLimitHeaders(
+  result: RateLimitResult
+): Record<string, string> {
   return {
     "X-RateLimit-Limit": String(result.limit),
     "X-RateLimit-Remaining": String(result.remaining),
     ...(result.allowed ? {} : { "Retry-After": String(result.resetInSeconds) }),
   }
-}
-
-/** Só pra diagnóstico no painel/auditoria: diz se o modo robusto está ligado. */
-export function isDistributedRateLimitEnabled(): boolean {
-  return upstashConfig() !== null
 }

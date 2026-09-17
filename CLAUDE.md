@@ -20,7 +20,7 @@
 - **Supabase** (Postgres + Auth + Vault/pgsodium + pg_cron) — projeto criado, URL/anon/service_role em `.env.local` (nunca commitado); schema aplicado via migrations manuais (ver "Banco de dados" abaixo)
 - **@supabase/ssr** + **@supabase/supabase-js** — sessão em cookies no App Router (ver "Autenticação e shell")
 - **Recharts** e **react-simple-maps** — entram nas fases 8/9 (dashboard/geo), não instalados ainda
-- **Upstash Redis** (`@upstash/ratelimit`) — entra na fase 5 (captura de eventos)
+- **Sem Redis/Upstash** — o rate limit roda no próprio Postgres do Supabase (ver "Captura de eventos"), pra não acrescentar serviço nem credencial
 - **GitHub** para versionamento, **Vercel** para deploy (projeto próprio, root directory `apps/tracking.negou.net`, sem `vercel.json` — env vars só na dashboard da Vercel, seguindo `VERCEL_DEPLOY.md` da raiz do monorepo)
 
 ---
@@ -168,7 +168,7 @@ Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) 
 - **Sem cookie entre domínios.** O `track.js` lê o que precisa (trck_user_id, `_fbp`/`_fbc`, `_ga`, `_ga_<id>`) no próprio site e manda tudo explicitamente no corpo. Isso dispensa `Access-Control-Allow-Credentials` e toda a fragilidade de cookie cross-site — menos superfície e menos coisa pra quebrar quando navegador mudar política.
 - **Cross-domain é por URL.** O `track.js` decora automaticamente links de checkout (PerfectPay) com `?tuid=` e links de WhatsApp com o id dentro do texto da mensagem, inclusive em links criados depois (MutationObserver). É isso que permite casar a compra com a visita na fase 7.
 - **`keepalive: true` no envio.** O InitiateCheckout dispara um instante antes de o navegador sair da página; sem keepalive a requisição é cancelada no meio e o evento se perde justo no passo mais valioso do funil.
-- **Rate limit:** `lib/rate-limit.ts` usa Upstash Redis por HTTP puro quando `UPSTASH_REDIS_REST_URL`/`UPSTASH_REDIS_REST_TOKEN` existem, e cai pra contador em memória quando não existem. **O modo memória não protege de verdade em produção** — cada função serverless é um processo isolado, então o contador não é compartilhado. Provisionar o Upstash está nas pendências. Em qualquer falha do Redis a decisão é deixar passar: limitador com problema não pode derrubar a captura do site.
+- **Rate limit no próprio Postgres, não em Redis.** O contador precisa ser compartilhado entre instâncias: cada requisição pode cair numa função serverless diferente, e contador em memória nunca soma — o atacante só precisa bater em instâncias distintas. A escolha clássica seria Redis, mas seria mais um serviço, mais uma conta e mais duas credenciais; o Postgres do Supabase já existe, já é compartilhado e já é consultado nesses mesmos endpoints. Uma chamada atômica (`bump_rate_limit`, na migration `..._rate_limits.sql`) resolve numa ida só ao banco. Em qualquer falha do banco a decisão é **deixar passar**: limitador com problema não pode derrubar a captura do site inteiro — verificado com a função ainda inexistente, os endpoints seguiram respondendo 200.
 
 ---
 
@@ -246,8 +246,8 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - ✅ ~~Criar o projeto Supabase~~ — feito; URL/anon/service_role em `.env.local`.
 - ✅ ~~Rodar as 5 migrations da fase 2 + `verify_phase2.sql`~~ — feito e verificado (Vault já vinha habilitado no projeto, não precisou de passo extra em Database → Extensions).
 - ✅ ~~Criar um usuário do painel no Supabase Studio~~ — feito; 2 contas cadastradas, ambas com email confirmado.
-- **LIMPAR o `test_event_code` antes de ligar o tráfego real.** Está com `TEST67986` desde 2026-09-17, a pedido do usuário, pra validar a integração. Enquanto esse campo tiver valor, **todo** evento enviado ao Meta é marcado como teste: ele aparece na aba Test Events e **não conta** para atribuição, otimização de campanha nem públicos. Esquecer isso significa anunciar às cegas sem nenhum erro aparecendo em lugar nenhum. Limpar em Configurações → Geral. Item obrigatório da auditoria da fase 10.
-- **Provisionar o Upstash Redis** (plano gratuito serve) e colocar `UPSTASH_REDIS_REST_URL` e `UPSTASH_REDIS_REST_TOKEN` no `.env.local` e na Vercel. Sem isso o rate limit dos endpoints públicos cai pro modo memória, que **não** protege contra abuso distribuído (cada função serverless é um processo isolado). O código já está pronto: é só existir a variável. Item obrigatório da auditoria da fase 10.
+- ✅ ~~Limpar o `test_event_code`~~ — feito pelo usuário em 2026-09-17, confirmado no banco (`null`). Se voltar a preencher pra testar, lembrar de limpar de novo: enquanto tiver valor, nenhum evento conta pra atribuição ou otimização.
+- **Rodar a migration `20260917170000_rate_limits.sql`** no SQL Editor do Supabase. Até lá o rate limit falha aberto (os endpoints funcionam, só não há limite). Não precisa de Upstash nem de nenhum serviço novo.
 - **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase.
 - **Instalar o `track.js` nos sites** depois do deploy: `<script src="https://tracking.negou.net/track.js" defer></script>` em `lp.negou.net` (e nos outros subdomínios que devam ser rastreados).
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
