@@ -45,7 +45,7 @@ apps/tracking.negou.net/
 │       ├── identify/route.ts               # ✅ fase 5 — upsert do visitante
 │       ├── event/route.ts                  # ✅ fase 5 — log com dedup por event_id
 │       ├── config/public/route.ts          # ✅ fase 5 — só IDs públicos, pro track.js
-│       └── webhook/compra/[platform]/route.ts   # [fase 7]
+│       └── webhook/compra/[platform]/route.ts   # ✅ fase 7 — token, idempotência, vinculação
 ├── lib/
 │   ├── supabase/env.ts                     # ✅ fase 3 — leitura validada das env vars
 │   ├── supabase/server.ts                  # ✅ fase 3 — cliente SSR (anon + cookies), respeita RLS
@@ -66,7 +66,8 @@ apps/tracking.negou.net/
 │   ├── cors.ts                             # ✅ fase 5 — allowlist exata dos endpoints públicos
 │   ├── validation.ts                       # ✅ fase 5 — limpeza de tudo que entra
 │   ├── crypto/hash.ts                      # ✅ fase 5 — normalização + SHA-256 do Meta
-│   └── webhooks/adapters/{index,perfectpay}.ts   # [fase 7]
+│   ├── webhooks/adapters/{index,types,perfectpay}.ts  # ✅ fase 7 — formato normalizado por plataforma
+│   └── dispatch/purchase-dispatch.ts       # ✅ fase 7 — Purchase pro Meta + GA4
 ├── components/
 │   ├── ui/                                 # ✅ shadcn (button, card, badge, separator, switch, sidebar, sheet, dropdown-menu, input, label, alert, tooltip, skeleton)
 │   ├── dashboard-sidebar.tsx               # ✅ fase 3 — navegação (drawer no celular, sidebar no desktop)
@@ -183,6 +184,23 @@ Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) 
 
 ---
 
+## Webhook de compra (fase 7 — implementado)
+
+`POST /api/webhook/compra/[platform]` — PerfectPay implementado; Hotmart, Kiwify e Eduzz entram escrevendo um adaptador e registrando em `lib/webhooks/adapters/index.ts`.
+
+- **Formato do PerfectPay confirmado na doc oficial**, não deduzido: OpenAPI em `https://app.perfectpay.com.br/docs/api.json` (eles publicam também `llms.txt` e `llms-full.txt`). Campos: `code` (id da transação), `sale_amount`, `currency_enum` (1=BRL, 2=USD, 3=EUR), `sale_status_enum`, e os objetos `product`, `plan`, `customer` (`full_name`, `email`, `identification_number`) e `metadata`.
+- **Detalhe que a doc avisa e que seria impossível adivinhar:** no PostBack alguns status chegam JÁ normalizados pelo próprio PerfectPay — `8/10/16 → 2`, `11 → 6`, `17 → 9`, `18/19/20 → 7`. O mapa em `perfectpay.ts` cobre todos os 19 valores mesmo assim, porque receber um valor inesperado é pior do que ter linhas a mais.
+- **`in_mediation` (4) é mapeado para `approved`**, decisão consciente: o dinheiro foi recebido e ainda não foi revertido, então continua contando como receita. Se virar chargeback de verdade chega o status 9 e vira `chargeback`. O valor cru fica em `platform_status`, então o sinal não se perde.
+- **`metadata.src` é o canal do `trck_user_id`.** O PerfectPay NÃO repassa parâmetro arbitrário pro webhook — só `src` e as `utm_*`. Por isso o `track.js` preenche `src` nos links de checkout. Se o link já tiver `src` (uso próprio de origem/afiliado), o script não sobrescreve, e a vinculação cai pro email.
+- **Idempotência com trava atômica.** `transaction_id` é UNIQUE e o upsert atualiza a linha a cada transição de status (a plataforma manda um webhook por transição — pendente, aprovada, reembolsada). O disparo do Purchase acontece UMA vez só, garantido por `UPDATE ... WHERE transaction_id = X AND meta_event_id IS NULL RETURNING id`: só uma requisição consegue marcar a linha, mesmo com duas chegando ao mesmo tempo. Quem marcou, dispara.
+- **`event_id` determinístico** (`purchase_<transaction_id>`): reentrega do mesmo webhook gera o mesmo id, então o Meta deduplica mesmo se a trava falhar.
+- **Aqui o GA4 ENTRA.** Esta é a conversão que nasce fora do navegador — exatamente o caso de uso do Measurement Protocol. Reusa o `client_id` e o `session_id` capturados na visita, pra a compra cair na sessão certa em vez de virar tráfego direto órfão.
+- **Vinculação em ordem de confiança:** `trck_user_id` (veio da URL do checkout, vínculo direto) → email (hash) → telefone (hash) → nenhum. Sem vínculo a compra é gravada mesmo assim: perder a venda por não saber a origem seria muito pior do que registrá-la sem atribuição. `match_method` e `match_found` guardam o que aconteceu.
+- **Responde 200 sempre que entendeu o payload**, mesmo se o disparo falhar depois. Plataforma de pagamento reenvia webhook que não recebeu 2xx, e loop de reenvio por erro nosso só piora. O que deu errado fica em `response_meta`/`response_ga4`.
+- **Token no header `x-webhook-token` ou na querystring** (nem toda plataforma deixa configurar header). A URL completa nunca é logada, porque carrega o token.
+
+---
+
 ## Convenções
 
 ### Git & Commits
@@ -216,7 +234,7 @@ Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) 
 4. ✅ **Painel de configurações** — CRUD das 3 tabelas de conta com segredos write-only no Vault, token de webhook mostrado uma vez, e teste de conexão por conta (ver "Credenciais e destinos")
 5. ✅ **Captura de eventos** — `/api/config/public`, `/api/identify`, `/api/event` e `public/track.js`, com CORS fechado, validação, geo no servidor, dedup por `event_id` e rate limit (ver "Captura de eventos")
 6. ✅ **Disparo Meta CAPI + GA4 Measurement Protocol** — envio para todos os destinos ativos via `after()`, com a resposta de cada um gravada no log do evento (ver "Disparo server-side"). O módulo do GA4 está pronto mas só é chamado pelo webhook, na fase 7.
-7. ⏳ Webhook de compra (PerfectPay primeiro)
+7. ✅ **Webhook de compra** — `/api/webhook/compra/[platform]` com adaptador do PerfectPay, vinculação da venda com a visita, idempotência com trava atômica e Purchase disparado pro Meta e pro GA4 (ver "Webhook de compra")
 8. ⏳ Dashboard: Visão geral, Eventos, Faturamento, Geo
 9. ⏳ Campanhas (Meta Ads Insights + ROAS/CPA)
 10. ⏳ Auditoria de segurança e publicação
@@ -266,6 +284,8 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 - **2026-09-16:** Fase 1 concluída — scaffold Next.js 16.3.5/React 19.2.8, Tailwind v4 + shadcn/ui (Radix, preset nova), design tokens HSL (verde-neon/ciano/âmbar, dark padrão + toggle claro), fontes Manrope + JetBrains Mono, `.gitignore` protegendo os `.txt` de credencial soltos, página placeholder demonstrando o design system.
 - **2026-09-16:** Projeto Supabase criado pelo usuário; URL/anon/service_role movidos para `.env.local`. Os 8 arquivos de credencial soltos (Meta, GA4, Supabase) consolidados em `.credenciais-locais/`, uma única pasta gitignorada — mais robusto do que listar nomes exatos.
 - **2026-09-16:** Fase 2 (migrations) escrita — 5 arquivos SQL em `supabase/migrations/` (extensões, tabelas, RLS, funções de Vault, job de retenção) + `supabase/verify_phase2.sql`. Aplicação é manual (colar no SQL Editor do Supabase), por decisão do usuário de não compartilhar um Personal Access Token/senha de banco novo.
+- **2026-09-17:** Fase 7 — webhook de compra. Adaptador do PerfectPay escrito a partir do OpenAPI oficial, endpoint com token, vinculação por `trck_user_id`/email/telefone, idempotência por trava atômica e Purchase pro Meta e GA4. 45 testes de integração passaram, com o Meta confirmando `events_received: 1` no Purchase. Durante o teste o `webhook_token_hash` foi trocado por um de teste e as contas GA4 desativadas (pra não injetar compra falsa nos relatórios); ambos restaurados no fim.
+  - **Pendência honesta:** o caminho do GA4 na compra não foi confirmado ao vivo justamente por causa disso — o GA4 não tem modo de teste que fique fora dos relatórios, então qualquer verificação real injeta uma compra de mentira na receita. Confirmar na primeira venda de verdade, olhando o `purchase` no GA4.
 - **2026-09-17:** Fase 6 — disparo server-side. `lib/meta/capi.ts` (payload conforme a doc + fan-out pros pixels ativos), `lib/ga4/mp.ts` (pronto, usado só pelo webhook na fase 7) e `lib/dispatch/event-dispatch.ts`, ligado ao `/api/event` via `after()`. Teste ponta a ponta contra a API real do Meta: 26 verificações, com `events_received: 1` confirmado, cada regra de hash conferida campo a campo, e a garantia de que o `access_token` não aparece no log. O `test_event_code` foi definido temporariamente pro teste não sujar produção e restaurado ao valor original no fim.
 - **2026-09-17:** Fase 5 — captura de eventos. `/api/config/public` (só IDs públicos), `/api/identify` (upsert do visitante, hashes do Meta, geo no servidor) e `/api/event` (dedup por `event_id` nascido no navegador), mais o `public/track.js`: resolve identidade, carrega gtag e Pixel com os IDs do painel, decora links de checkout/WhatsApp e dispara PageView. 33 testes de integração contra o servidor e o banco reais — incluindo CORS recusando `negou.net.site-do-atacante.com`, geo forjado pelo cliente sendo ignorado, hashes batendo com a normalização do Meta e dedup de reenvio — passaram, e o banco ficou limpo.
 - **2026-09-16:** Fase 4 — painel de configurações. CRUD dos 3 tipos de conta com segredos write-only no Vault, token de webhook gerado/mostrado uma vez e guardado só como hash, e teste de conexão por conta. Constante `META_GRAPH_API_VERSION = v26.0` (confirmada no changelog oficial: lançada 29/07/2026). Testes de contrato contra o banco real (store/reveal/update/delete no Vault, CHECK de formato, unique 23505, trigger de updated_at) passaram e o banco ficou limpo.

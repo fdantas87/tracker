@@ -374,6 +374,18 @@
             url.searchParams.set("text", text + " [" + trckUserId + "]")
           }
         } else {
+          // O PerfectPay NÃO repassa parâmetro arbitrário pro webhook: só
+          // `src` e as utm_*. Então o id tem que viajar em `src`, senão a
+          // compra chega sem vínculo com a visita.
+          //
+          // Se o link já traz `src` (uso próprio pra origem/afiliado), a gente
+          // não sobrescreve — estragaria o relatório de quem montou o link. Aí
+          // a vinculação cai pro email, que é o plano B do webhook.
+          if (!url.searchParams.get("src")) {
+            url.searchParams.set("src", trckUserId)
+          }
+          // Mantido também como `tuid` pra plataformas que repassam
+          // parâmetros livres (usado por adaptadores futuros).
           url.searchParams.set(URL_PARAM, trckUserId)
         }
 

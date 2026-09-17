@@ -168,9 +168,34 @@ function WebhookSection() {
         </Button>
       </form>
 
-      <p className="text-xs text-muted-foreground">
-        O endpoint que recebe as compras é criado na fase 7. A URL para
-        cadastrar no PerfectPay aparece aqui quando ele existir.
+      <WebhookUrlHelp />
+    </div>
+  )
+}
+
+/**
+ * Monta a URL que vai ser cadastrada no PerfectPay. O token não fica aqui: ele
+ * só existe no momento em que é gerado, então a URL é mostrada com um lugar
+ * pra colar o valor que o usuário guardou.
+ */
+function WebhookUrlHelp() {
+  const origin = typeof window !== "undefined" ? window.location.origin : ""
+
+  return (
+    <div className="rounded-xl border bg-background/40 p-4">
+      <p className="text-sm font-medium">URL para cadastrar no PerfectPay</p>
+      <p className="mt-1 text-sm text-muted-foreground">
+        Em Ferramentas → PostBack/Webhook, cadastre a URL abaixo trocando
+        <code className="mx-1 font-mono text-xs">SEU_TOKEN</code>
+        pelo token que você copiou.
+      </p>
+      <code className="mt-3 block overflow-x-auto rounded-lg bg-background/80 px-3 py-2 font-mono text-xs break-all">
+        {origin}/api/webhook/compra/perfectpay?token=SEU_TOKEN
+      </code>
+      <p className="mt-3 text-xs text-muted-foreground">
+        Para a compra ser ligada à visita, o PerfectPay precisa repassar o campo
+        <code className="mx-1 font-mono">src</code>— o script de captura já
+        preenche isso nos links de checkout automaticamente.
       </p>
     </div>
   )
