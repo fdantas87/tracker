@@ -37,6 +37,14 @@ import {
  * capturado e guardado.
  */
 
+/**
+ * O `after()` abaixo roda DENTRO do orçamento de tempo da função. O padrão da
+ * Vercel é 10s, e o envio ao Meta tem timeout de 10s — ou seja, no pior caso o
+ * disparo seria morto no meio, perdendo o evento sem erro nenhum aparecer.
+ * 30s dá folga confortável.
+ */
+export const maxDuration = 30
+
 export async function OPTIONS(request: Request) {
   return preflightResponse(request)
 }

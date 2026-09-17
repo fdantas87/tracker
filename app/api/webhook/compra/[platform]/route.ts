@@ -33,6 +33,13 @@ import type { NormalizedPurchase } from "@/lib/webhooks/adapters/types"
  * deu errado fica registrado na linha da compra.
  */
 
+/**
+ * Mais folga que os outros endpoints: aqui o `after()` fala com o Meta E com o
+ * GA4. Com o padrão de 10s da Vercel, o disparo da compra seria interrompido no
+ * meio — e compra perdida em silêncio é o pior defeito possível neste sistema.
+ */
+export const maxDuration = 60
+
 export async function POST(
   request: Request,
   context: { params: Promise<{ platform: string }> }

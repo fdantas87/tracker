@@ -61,63 +61,70 @@ export async function dispatchPurchase(
   const phoneHash =
     hashPhone(purchase.buyerPhone) ?? asString(visitor?.phone_hash)
 
-  const metaResult = await sendToAllPixels({
-    eventName: "Purchase",
-    eventId,
-    eventTime: Math.floor(Date.now() / 1000),
-    actionSource: "website",
-    testEventCode: settings?.test_event_code ?? null,
-    customData: {
-      value: purchase.amount,
-      currency: purchase.currency,
-      contentIds: purchase.productId ? [purchase.productId] : null,
-      contentName: purchase.productName,
-      contentType: "product",
-      orderId: purchase.transactionId,
-    },
-    userData: {
-      emailHash,
-      phoneHash,
-      firstNameHash:
-        hashName(purchase.buyerFirstName) ?? asString(visitor?.first_name_hash),
-      lastNameHash:
-        hashName(purchase.buyerLastName) ?? asString(visitor?.last_name_hash),
-      cityHash: hashCity(asString(visitor?.geo_city)),
-      stateHash: hashState(asString(visitor?.geo_region)),
-      countryHash: hashCountry(asString(visitor?.geo_country)),
-      externalIdHash: purchase.trckUserId
-        ? hashExternalId(purchase.trckUserId)
-        : null,
-      // Texto puro. Sem visitante casado, estes vêm vazios e a correspondência
-      // cai — é o preço de não ter conseguido vincular a venda à visita.
-      fbp: asString(visitor?.fbp),
-      fbc: asString(visitor?.fbc),
-      clientIpAddress: asString(visitor?.ip),
-      clientUserAgent: asString(visitor?.user_agent),
-    },
-  })
-
   // GA4: reusa o client_id e o session_id capturados na visita, pra a compra
   // cair na sessão certa em vez de virar tráfego direto órfão.
   const gaClientId = asString(visitor?.ga_client_id)
-  const ga4Result = await sendToAllGa4({
-    clientId: gaClientId ?? "",
-    eventName: "purchase",
-    sessionId: asString(visitor?.ga_session_id),
-    value: purchase.amount,
-    currency: purchase.currency,
-    transactionId: purchase.transactionId,
-    items: purchase.productId
-      ? [
-          {
-            itemId: purchase.productId,
-            itemName: purchase.productName,
-            price: purchase.amount,
-            quantity: 1,
-          },
-        ]
-      : null,
-  })
+
+  // Meta e GA4 são independentes: em paralelo, o tempo total é o do mais lento
+  // em vez da soma dos dois. Importa porque isto roda dentro do orçamento de
+  // tempo da função serverless.
+  const [metaResult, ga4Result] = await Promise.all([
+    sendToAllPixels({
+      eventName: "Purchase",
+      eventId,
+      eventTime: Math.floor(Date.now() / 1000),
+      actionSource: "website",
+      testEventCode: settings?.test_event_code ?? null,
+      customData: {
+        value: purchase.amount,
+        currency: purchase.currency,
+        contentIds: purchase.productId ? [purchase.productId] : null,
+        contentName: purchase.productName,
+        contentType: "product",
+        orderId: purchase.transactionId,
+      },
+      userData: {
+        emailHash,
+        phoneHash,
+        firstNameHash:
+          hashName(purchase.buyerFirstName) ??
+          asString(visitor?.first_name_hash),
+        lastNameHash:
+          hashName(purchase.buyerLastName) ?? asString(visitor?.last_name_hash),
+        cityHash: hashCity(asString(visitor?.geo_city)),
+        stateHash: hashState(asString(visitor?.geo_region)),
+        countryHash: hashCountry(asString(visitor?.geo_country)),
+        externalIdHash: purchase.trckUserId
+          ? hashExternalId(purchase.trckUserId)
+          : null,
+        // Texto puro. Sem visitante casado, estes vêm vazios e a
+        // correspondência cai — é o preço de não ter conseguido vincular a
+        // venda à visita.
+        fbp: asString(visitor?.fbp),
+        fbc: asString(visitor?.fbc),
+        clientIpAddress: asString(visitor?.ip),
+        clientUserAgent: asString(visitor?.user_agent),
+      },
+    }),
+    sendToAllGa4({
+      clientId: gaClientId ?? "",
+      eventName: "purchase",
+      sessionId: asString(visitor?.ga_session_id),
+      value: purchase.amount,
+      currency: purchase.currency,
+      transactionId: purchase.transactionId,
+      items: purchase.productId
+        ? [
+            {
+              itemId: purchase.productId,
+              itemName: purchase.productName,
+              price: purchase.amount,
+              quantity: 1,
+            },
+          ]
+        : null,
+    }),
+  ])
 
   await supabase
     .from("purchases")
