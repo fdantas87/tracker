@@ -291,7 +291,8 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - **Fase 7.5 — 3 passos, nesta ordem:**
   1. Supabase → Database → Extensions → habilitar **`pg_net`** (é ela que deixa o Postgres chamar uma URL).
   2. Rodar `migrations/20260917190000_event_queue.sql` no SQL Editor, e depois `verify_phase7_5.sql` pra conferir. **Antes do deploy** — ver o aviso de ordem obrigatória na seção "Disparo atrasado".
-  3. No painel, aba **Disparo**: preencher a URL do cron (`https://tracking.negou.net/api/cron/dispatch`) e gerar o token. Até isso, `tick_event_queue()` sai quieto e a fila não drena.
+  3. ✅ ~~Gerar o token do cron~~ — feito (está no Vault). Falta o **deploy** do código da fase 7.5 e, só depois dele, preencher a **URL do cron** no painel (aba Disparo). Enquanto a URL estiver vazia, `tick_event_queue()` sai quieto e a fila não drena. Confira com `npm run verify:dispatch`.
+- **A produção está com o código ANTERIOR à fase 7.5** (verificado em 2026-09-17: `/api/cron/dispatch` dá 404 e o `track.js` no ar tem 14.670 bytes contra 31.696 do repositório). E **nada deste projeto foi enviado ao GitHub**: `origin/master` está no commit inicial, com 30 commits locais pendentes. O que está no ar subiu por outro caminho (Vercel CLI), então `git push` não é o que publica — refaça o deploy do mesmo jeito que foi feito.
 - **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase.
 - **Instalar o `track.js` nos sites** depois do deploy: `<script src="https://tracking.negou.net/track.js" defer></script>` em `lp.negou.net` (e nos outros subdomínios que devam ser rastreados).
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
@@ -306,6 +307,14 @@ npm run dev       # desenvolvimento (http://localhost:3000)
 npm run build     # build de produção (rodar antes de cada commit de fase)
 npm run start     # rodar a build de produção localmente
 npm run lint      # ESLint
+
+# Verifica a fila de disparo atrasado (fase 7.5): confere se a produção está com
+# o código novo, se o painel está configurado e — com um código de teste real —
+# se o pg_cron está REALMENTE drenando. Diz o que fazer em cada falha.
+npm run verify:dispatch
+npm run verify:dispatch -- --test-code TEST12345   # inclui o teste ao vivo
+npm run verify:dispatch -- --so-configuracao       # só a conferência
+
 npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 ```
 
