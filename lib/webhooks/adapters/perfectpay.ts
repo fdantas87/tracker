@@ -1,5 +1,10 @@
 import { LIMITS, cleanAmount, cleanString } from "@/lib/validation"
-import type { AdapterResult, PurchaseStatus, WebhookAdapter } from "./types"
+import type {
+  AdapterResult,
+  PaymentMethod,
+  PurchaseStatus,
+  WebhookAdapter,
+} from "./types"
 
 /**
  * Adaptador do PerfectPay.
@@ -81,6 +86,82 @@ const STATUS_NAMES: Record<number, string> = {
 /** currency_enum: 1 = BRL, 2 = USD, 3 = EUR. */
 const CURRENCY_MAP: Record<number, string> = { 1: "BRL", 2: "USD", 3: "EUR" }
 
+/**
+ * Mapeamento oficial do `payment_type_enum`, confirmado no OpenAPI
+ * (app.perfectpay.com.br/docs/api.json), não deduzido:
+ *
+ *   1 credit_card · 2 billet · 3 paypal · 4 credit_card_recurrent
+ *   5 free_price · 6 credit_card_upsell · 7 pix · 8 billet_installments
+ *   9 open_finance · 10 google_pay · 11 apple_pay · 12 picpay · 16 amazon_pay
+ *
+ * As três variações de cartão colapsam em `credit_card` e as duas de boleto em
+ * `billet`: para o relatório de vendas, "recorrente" e "upsell" são o mesmo
+ * meio de pagamento. O bruto continua sendo gravado em
+ * `platform_payment_method`, então nada disso se perde.
+ *
+ * LIMITE CONHECIDO: o OpenAPI documenta a API de vendas; a seção de Webhooks
+ * (o payload do PostBack) não está publicada nele e `llms-full.txt` responde
+ * 404. Ou seja: está confirmado que a plataforma TEM o campo, não que o
+ * postback o entregue com este nome exato. Por isso a leitura abaixo é
+ * tolerante e a ausência total vira `null` em vez de `other` — mesma postura
+ * já adotada aqui para telefone e CEP.
+ */
+const PAYMENT_MAP: Record<number, PaymentMethod> = {
+  1: "credit_card",
+  2: "billet",
+  3: "other", // paypal
+  4: "credit_card", // recorrente
+  5: "other", // free_price
+  6: "credit_card", // upsell
+  7: "pix",
+  8: "billet", // boleto parcelado
+  9: "other", // open_finance
+  10: "other", // google_pay
+  11: "other", // apple_pay
+  12: "other", // picpay
+  16: "other", // amazon_pay
+}
+
+/** Reconhece a forma de pagamento escrita por extenso, quando vier assim. */
+const PAYMENT_TEXTO: Record<string, PaymentMethod> = {
+  credit_card: "credit_card",
+  creditcard: "credit_card",
+  cartao: "credit_card",
+  cartão: "credit_card",
+  billet: "billet",
+  boleto: "billet",
+  pix: "pix",
+}
+
+/**
+ * Lê a forma de pagamento aceitando número ou texto, em qualquer dos nomes
+ * prováveis de campo.
+ *
+ * Devolve sempre o bruto junto do canônico: valor desconhecido vira `other`
+ * (sabemos que houve pagamento, só não em qual dos três meios), e campo
+ * ausente vira `null` (não sabemos nada).
+ */
+function readPaymentMethod(body: Record<string, unknown>): {
+  method: PaymentMethod | null
+  raw: string | null
+} {
+  const bruto =
+    cleanString(body.payment_type_enum, LIMITS.shortText) ??
+    cleanString(body.payment_method_enum, LIMITS.shortText) ??
+    cleanString(body.payment_type, LIMITS.shortText) ??
+    cleanString(body.payment_method, LIMITS.shortText)
+
+  if (!bruto) return { method: null, raw: null }
+
+  const numero = Number(bruto)
+  if (Number.isFinite(numero) && numero in PAYMENT_MAP) {
+    return { method: PAYMENT_MAP[numero], raw: bruto }
+  }
+
+  const texto = PAYMENT_TEXTO[bruto.toLowerCase().replace(/[\s-]/g, "_")]
+  return { method: texto ?? "other", raw: bruto }
+}
+
 /** Reconhece um UUID, pra achar nosso id em qualquer campo repassado. */
 const UUID_PATTERN =
   /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i
@@ -148,6 +229,8 @@ function parse(body: Record<string, unknown>): AdapterResult {
   const currencyNumber = Number(body.currency_enum)
   const currency = CURRENCY_MAP[currencyNumber] ?? "BRL"
 
+  const pagamento = readPaymentMethod(body)
+
   const product = asObject(body.product)
   const plan = asObject(body.plan)
   const customer = asObject(body.customer)
@@ -166,6 +249,9 @@ function parse(body: Record<string, unknown>): AdapterResult {
 
       amount,
       currency,
+
+      paymentMethod: pagamento.method,
+      platformPaymentMethod: pagamento.raw,
 
       // O nome do plano costuma ser mais específico que o do produto
       // ("3 potes + 2 grátis" vs "Herus Caps") — melhor pro relatório.

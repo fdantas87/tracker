@@ -7,8 +7,9 @@ import {
   Globe,
   LayoutDashboard,
   Megaphone,
-  Receipt,
   Settings,
+  ShoppingCart,
+  Users,
 } from "lucide-react"
 
 import {
@@ -28,7 +29,8 @@ import {
 const NAV_ITEMS = [
   { href: "/", label: "Visão geral", icon: LayoutDashboard },
   { href: "/eventos", label: "Eventos", icon: Activity },
-  { href: "/faturamento", label: "Faturamento", icon: Receipt },
+  { href: "/leads", label: "Leads", icon: Users },
+  { href: "/vendas", label: "Vendas", icon: ShoppingCart },
   { href: "/campanhas", label: "Campanhas", icon: Megaphone },
   { href: "/geo", label: "Geo", icon: Globe },
 ] as const

@@ -16,6 +16,17 @@ export type PurchaseStatus =
   | "pending"
   | "expired"
 
+/**
+ * Enum canônico da forma de pagamento, igual ao CHECK de
+ * `purchases.payment_method`.
+ *
+ * Propositalmente grosso: a tela de Vendas quebra em Cartão / Pix / Boleto /
+ * Outros, e carteiras (Google Pay, Apple Pay, PicPay, PayPal) não somam o
+ * bastante para virar categoria própria. O valor bruto da plataforma fica em
+ * `platformPaymentMethod`, então a granularidade não se perde.
+ */
+export type PaymentMethod = "credit_card" | "billet" | "pix" | "other"
+
 export type NormalizedPurchase = {
   /** Identificador da transação na plataforma. Chave de idempotência. */
   transactionId: string
@@ -25,6 +36,16 @@ export type NormalizedPurchase = {
 
   amount: number
   currency: string
+
+  /**
+   * Forma de pagamento canônica, ou null quando a plataforma não informou.
+   *
+   * `null` e `"other"` são estados diferentes e a tela os distingue: o
+   * primeiro é "não sei", o segundo é "sei que não é cartão, boleto nem Pix".
+   */
+  paymentMethod: PaymentMethod | null
+  /** O valor bruto da plataforma, preservado para auditoria. */
+  platformPaymentMethod: string | null
 
   productName: string | null
   productId: string | null

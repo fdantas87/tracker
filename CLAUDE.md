@@ -36,7 +36,9 @@ apps/tracking.negou.net/
 │   │   ├── page.tsx                        # Visão geral        [conteúdo real: fase 8]
 │   │   ├── eventos/page.tsx                # ✅ fase 8a — tabela, chips, gráfico, filtros na URL
 │   │   ├── eventos/actions.ts              # ✅ fase 8a — carrega o payload só quando o modal abre
-│   │   ├── faturamento/page.tsx            # [fase 8]
+│   │   ├── vendas/page.tsx                 # ✅ fase 8b — cards, gráfico, tabela, filtros na URL
+│   │   ├── vendas/actions.ts               # ✅ fase 8b — detalhe da venda só quando o painel abre
+│   │   ├── faturamento/page.tsx            # ✅ fase 8b — redirect("/vendas"), rota antiga
 │   │   ├── campanhas/page.tsx              # [fase 9]
 │   │   ├── geo/page.tsx                    # [fase 8]
 │   │   └── configuracoes/page.tsx          # [fase 4] CRUD de credenciais (Server Actions)
@@ -69,6 +71,8 @@ apps/tracking.negou.net/
 │   ├── settings/dispatch-config.ts         # ✅ fase 7.5 — config memorizada + regra do atraso
 │   ├── dashboard/filters.ts                # ✅ fase 8a — constantes dos filtros (SEM server-only)
 │   ├── dashboard/events.ts                 # ✅ fase 8a — consultas da tela de Eventos (sob RLS)
+│   ├── dashboard/vendas-filters.ts         # ✅ fase 8b — filtros de Vendas (SEM server-only)
+│   ├── dashboard/vendas.ts                 # ✅ fase 8b — consultas da tela de Vendas (sob RLS)
 │   ├── dashboard/format.ts                 # ✅ fase 8a — data/hora no fuso do painel
 │   ├── dashboard/timezone.ts               # ✅ revisão geo — FUSO_PAINEL, diaLocal, inicioDoDiaLocal (SEM server-only)
 │   ├── geo.ts                              # ✅ fase 5 — IP real + os 8 headers x-vercel-ip-*
@@ -84,6 +88,9 @@ apps/tracking.negou.net/
 │   ├── dashboard/                          # ✅ fase 8a — events-table, events-filters, events-chart,
 │   │                                       #    status-chips, dispatch-status-badge, event-detail-dialog,
 │   │                                       #    pagination-links
+│   │                                       # ✅ fase 8b — stat-card, vendas-filters, vendas-table,
+│   │                                       #    payment-method-badge, payment-method-chart,
+│   │                                       #    sale-detail-sheet, purchase-status-badge
 │   ├── dashboard-sidebar.tsx               # ✅ fase 3 — navegação (drawer no celular, sidebar no desktop)
 │   ├── user-menu.tsx                       # ✅ fase 3 — conta + sair
 │   ├── page-header.tsx                     # ✅ fase 3 — cabeçalho e placeholder de fase
@@ -97,6 +104,7 @@ apps/tracking.negou.net/
     ├── migrations/                          # ✅ fase 2 — SQL das 7 tabelas + RLS + Vault + pg_cron
     │                                        #    fase 5 — rate_limits; fase 7.5 — event_queue
     │                                        #    revisão geo — geo_enriquecido (8 colunas + fill_visitor_pii)
+    │                                        #    fase 8b — purchases_dados_comprador, purchases_forma_pagamento
     ├── verify_phase2.sql                    # ✅ fase 2 — queries de verificação (roda manual, não é migration)
     └── verify_phase7_5.sql                  # ✅ fase 7.5 — 11 checagens da fila (roda manual)
 ```
@@ -408,6 +416,105 @@ posicionais de `verify_phase7_5.sql` continuam válidas.
 
 ---
 
+## Tela de Vendas (fase 8b — implementado)
+
+Substituiu o placeholder de Faturamento: a rota é `/vendas`, o item da sidebar
+se chama **Vendas**, e `/faturamento` virou um `redirect("/vendas")` para não
+quebrar link salvo. **Ter duas telas de receita era o risco real**, não o 404:
+a de Leads soma só compras atribuídas e diria outro número.
+
+- **Esta é a tela do total de vendas; a de Leads não é.** `lib/dashboard/vendas.ts`
+  parte de `purchases`, então compra com `match_found = false` entra aqui e nunca
+  aparece em Leads, que parte de `visitors`. Os dois números divergirem é o
+  comportamento correto — não "conserte" a divergência igualando as consultas.
+- **Taxas, Imposto, Custos de Produto e Faturamento Líquido ficaram DE FORA, de
+  propósito.** O desenho de referência tinha os quatro, todos rotulados
+  "estimado". Nenhum desses dados existe no banco nem chega pelo webhook, e
+  estimá-los por percentual chutado produziria um "líquido" que parece número e
+  não é. Entram quando a taxa real da plataforma passar a ser capturada — o
+  array `commissions` do PerfectPay, onde `affiliation_type: 0` é a plataforma,
+  é o candidato.
+- **Leitura sob RLS**, com `createClient()` (anon + cookies), igual a Eventos e
+  Leads. `purchases` tem `select using (true)` desde a fase 2. Não copiar o
+  `service_role` de `lib/settings/queries.ts`, que existe por outro motivo.
+- **O resumo ignora o filtro de status, e só ele** — mesma decisão dos chips de
+  Eventos. Se o status entrasse, escolher "Reembolsadas" zeraria o card de
+  faturamento e os cards deixariam de servir como panorama.
+- **A quebra por forma de pagamento conta só venda APROVADA.** Um boleto gerado
+  e não pago inflaria o "Boleto" e faria o gráfico descrever intenção, não venda.
+- **Moeda não se soma.** R$ 100 + US$ 100 não são 200 de nada: o resumo agrega
+  por moeda, exibe a predominante e avisa quando o recorte mistura mais de uma.
+- **`created_at` NÃO é a hora do pagamento** — é a do primeiro webhook daquela
+  transação, que para boleto e Pix é a da GERAÇÃO. Por isso a coluna se chama
+  "Registrada em" e o painel lateral mostra `updated_at` ao lado. Chamar
+  qualquer um dos dois de "hora da compra" convidaria a conclusão errada numa
+  análise de horário.
+- **A linha inteira abre o detalhe**, sem botão "ver". Como `<tr>` não é focável
+  e o `SheetTrigger` do Radix só instala o `onClick`, a linha recebe `tabIndex`,
+  `role="button"` e o tratamento de Enter/Espaço — sem isso a tela ficaria
+  inalcançável por teclado.
+- **O período fica FORA do popover de Filtros.** É o controle que muda o
+  significado de todos os números da tela; escondê-lo deixaria o usuário lendo
+  "R$ 12.400" sem ver de que janela ele fala. O resto (status, pagamento, busca)
+  fica atrás do botão. Primeira vez que `ui/popover.tsx` é usado no app — ele
+  importava `cn` do pacote `cn` em vez de `@/lib/utils`, corrigido aqui.
+- **`payment_method` e `platform_payment_method` são duas colunas**, espelhando
+  `status`/`platform_status`. O canônico tem 4 valores; o bruto preserva a
+  granularidade que vira `other` (google_pay, apple_pay, picpay, paypal,
+  open_finance) sem migration nova.
+- **`null` não é `other`.** `null` = a plataforma não informou; `other` =
+  informou algo fora dos três. A tela mostra "Não informado" no primeiro caso, e
+  o filtro tem um valor próprio para ele. Confundir os dois esconderia
+  justamente o sintoma de o adaptador ter parado de ler o campo.
+- **A doc do PostBack do PerfectPay não é pública.** `payment_type_enum` está
+  confirmado no OpenAPI (`app.perfectpay.com.br/docs/api.json`), mas ele
+  documenta a API de vendas; a seção "Webhooks" não está lá e `llms-full.txt`
+  responde 404. Ou seja: está confirmado que a plataforma TEM o campo, não que o
+  postback o entregue com esse nome. Por isso `readPaymentMethod()` aceita
+  `payment_type_enum`, `payment_method_enum`, `payment_type` e `payment_method`,
+  número ou texto, e a ausência total vira `null` — mesma postura já usada ali
+  para telefone e CEP. Quando a primeira venda real chegar, conferir
+  `raw_webhook` e apertar a leitura.
+- **Erro de leitura NÃO substitui a tela.** Os cards renderizam zerados e o
+  aviso vem numa faixa acima deles. Trocar a página inteira por um alerta
+  vermelho fazia uma falha momentânea parecer que o painel tinha quebrado. Mas o
+  aviso **não pode sumir**: num painel de vendas, "R$ 0,00" silencioso não deixa
+  distinguir "não vendi nada" de "a consulta falhou", e essa é a pior dúvida
+  possível aqui. Por isso `getVendasResumo` devolve o resumo zerado E a mensagem.
+- **As 4 formas canônicas aparecem sempre, mesmo zeradas** ("Cartão 0 · Pix 0 ·
+  Boleto 0 · Outros 0"). Ver o vocabulário completo responde "não vendi no Pix"
+  em vez de deixar a dúvida entre isso e "a tela não sabe sobre Pix".
+  `nao_informado` é a exceção e só entra quando tem volume — ela não é uma forma
+  de pagamento, é a ausência do dado, e mostrá-la zerada por padrão sugeriria um
+  problema onde não há nenhum. O card também não elege uma forma "principal"
+  quando tudo está zerado: exibe "—", porque escrever "Cartão" ali afirmaria algo
+  que não aconteceu.
+- **O seed passou a gerar forma de pagamento e nome do comprador.** Sem isso a
+  tela nasceria inteira em "Não informado" com a coluna Comprador vazia, e não
+  daria para desenvolver contra ela.
+- **Dois defeitos do `seed-events.mjs` corrigidos de passagem:** (1) o
+  `eventoDeBorda` tinha menos chaves que os outros eventos (faltavam as `utm_*`,
+  `custom_data`, `dispatch_claimed_at` e `dispatch_error`), e o PostgREST recusa
+  **o lote inteiro** com "All object keys must match" — o seed estava quebrado
+  desde a revisão de geo/fuso, quando aquele evento foi acrescentado; (2) comprar
+  exigia `identificado`, o que não corresponde ao sistema real — a vinculação
+  principal é pelo `trck_user_id` da URL do checkout, que funciona para quem
+  nunca preencheu formulário nenhum. Além de mais fiel, destravou o volume: 30
+  visitantes rendiam 2 ou 3 compras, e a tela de Vendas ficava sem dado para
+  conferir gráfico, quebra por pagamento e paginação.
+
+### ⚠️ Ordem obrigatória: migration ANTES do deploy (de novo)
+
+`20260919120000_purchases_forma_pagamento.sql` acrescenta as 2 colunas, e o
+upsert do webhook passa a gravá-las numa chamada só. **Sem a migration, o
+PostgREST rejeita a linha inteira e a compra deixa de ser registrada** — mesma
+lição das fases 7.5, geo e da migration de dados do comprador. O backfill a
+partir de `raw_webhook` vai junto no mesmo arquivo, e é específico do PerfectPay
+(por isso filtra por `platform`): aplicar aquele mapa a outra plataforma
+produziria dado errado em silêncio.
+
+---
+
 ## Convenções
 
 ### Git & Commits
@@ -444,7 +551,7 @@ posicionais de `verify_phase7_5.sql` continuam válidas.
 7. ✅ **Webhook de compra** — `/api/webhook/compra/[platform]` com adaptador do PerfectPay, vinculação da venda com a visita, idempotência com trava atômica e Purchase disparado pro Meta e pro GA4 (ver "Webhook de compra")
 7.5. ✅ **Disparo atrasado com retroalimentação** — fila no Postgres, modo híbrido adaptativo no `track.js`, captura de formulário, enriquecimento do visitante pela compra e pg_cron drenando a fila (ver "Disparo atrasado")
 8a. ✅ **Dashboard — tela de Eventos** — tabela com `dispatch_status`/`dispatch_attempts`/`dispatch_error`, chips de contagem, gráfico diário e modal de payload (ver "Tela de Eventos")
-8b. ⏳ Dashboard: Visão geral (funil) + Faturamento
+8b. ✅ **Dashboard — tela de Vendas** — faturamento, reembolsos, chargeback e quebra por forma de pagamento, com tabela paginada e painel lateral de detalhe da venda e do cliente (ver "Tela de Vendas"). Falta ainda a Visão geral (funil).
 8c. ⏳ Dashboard: Geo — mapa do Brasil com `react-simple-maps`
 9. ⏳ Campanhas (Meta Ads Insights + ROAS/CPA)
 10. ⏳ Auditoria de segurança e publicação
@@ -463,6 +570,7 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - ✅ ~~Instalar o `track.js` na LP~~ — feito, está em `apps/lp.negou.net/app/layout.tsx` e responde no ar. Falta instalar nos outros subdomínios que devam ser rastreados (`quiz.negou.net` ainda não resolve DNS).
 - ✅ ~~Gerar o primeiro dado real~~ — feito em 2026-09-18: uma visita à LP criou o visitante e o PageView, com `fbp`, IP, geo (`São Paulo/SP`) e `pixel_fired = false` (visitante anônimo, modo adaptativo), entrando na fila com a janela de 15 min. Foi essa visita que revelou o bug do `ga_client_id`.
 - ✅ ~~Rodar a migration `20260918120000_geo_enriquecido.sql` e publicar a revisão de geo/fuso~~ — feito em 2026-09-18, nesta ordem. Migration aplicada e conferida no SQL Editor (8 colunas com os tipos certos; `fill_visitor_pii` com **uma só** assinatura, de 7 parâmetros — sem sobrecarga), deploy por `vercel --prod` e conferência ao vivo passando. Falta ainda confirmar o `purchase` no GA4 na primeira venda real (pendência herdada da fase 7).
+- ✅ ~~Rodar as migrations `20260919090000_purchases_dados_comprador.sql` e `20260919120000_purchases_forma_pagamento.sql`~~ — feito pelo usuário em 2026-09-19 e conferido por REST: as 5 colunas novas de `purchases` respondem. **O deploy da fase 8b ainda não foi feito** — quando for, não há ordem a respeitar aqui, porque as migrations já estão no ar.
 - **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase.
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
 
@@ -508,6 +616,56 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-09-19:** Fase 8b — tela de Vendas. `lib/dashboard/{vendas,vendas-filters}.ts`,
+  `app/(dashboard)/vendas/{page,actions}.tsx` e 5 componentes novos em
+  `components/dashboard/` (`stat-card`, `vendas-filters`, `vendas-table`,
+  `payment-method-badge`, `payment-method-chart`, `sale-detail-sheet`). O item
+  "Faturamento" da sidebar virou "Vendas"; a rota antiga passou a redirecionar.
+  Nenhuma dependência nova — `recharts`, `chart`, `popover`, `select` e `table`
+  já estavam no projeto, e `formatarMoeda` já existia.
+  - **A decisão que define a tela: os quatro cards "estimados" do desenho de
+    referência (Taxas, Imposto, Custos de Produto, Faturamento Líquido) não foram
+    construídos.** Conferido coluna a coluna: `purchases` não tem nenhum desses
+    campos, o `NormalizedPurchase` não os carrega e o adaptador não os extrai.
+    Entregá-los com percentual chutado daria um "Faturamento Líquido" com cara de
+    número auditado. Ficam para quando a taxa real da plataforma for capturada.
+  - **Forma de pagamento entrou porque essa o dado sustenta:** `payment_type_enum`
+    está confirmado no OpenAPI oficial do PerfectPay, e estava sendo descartado —
+    sobrevivia só dentro de `raw_webhook`. Migration com 2 colunas (canônica +
+    bruta, espelhando `status`/`platform_status`), backfill de `raw_webhook` no
+    mesmo arquivo e leitura tolerante no adaptador.
+  - **Limite que ficou registrado em vez de ser escondido:** a doc do PostBack não
+    é pública (o `api.json` remete a uma seção "Webhooks" que não está nele, e o
+    `llms-full.txt` responde 404). Está confirmado que a plataforma TEM o campo,
+    não que o postback o entregue com esse nome — daí a leitura aceitar quatro
+    nomes de campo e a ausência virar `null`, nunca `other`.
+  - **Dois cuidados de correção que não apareceriam como erro:** somar moedas
+    diferentes num total só (o resumo agrega por moeda e avisa quando há mistura)
+    e tratar `created_at` como hora do pagamento — para boleto e Pix ele é o
+    instante da GERAÇÃO, então a coluna chama "Registrada em" e o detalhe mostra
+    `updated_at` ao lado.
+  - **Migration aplicada pelo usuário no mesmo dia**, e a verificação completa
+    rodou em seguida. Verificado: build e lint limpos, `check:actions` OK,
+    **29/29 no teste de mesa do adaptador** (os 13 valores do enum, enum como
+    string, valor desconhecido, os quatro nomes alternativos de campo, texto com
+    acento e maiúscula, e os três casos de ausência virando `null` — mais 9
+    checagens de regressão do resto do payload); **25/25 no teste autenticado
+    real** (usuário temporário pela Admin API, login pela `@supabase/ssr`, guarda
+    de rota, `/faturamento` → `/vendas`, filtros e paginação pela URL, busca com
+    os separadores do PostgREST — `a,b)(*` —, parâmetros inválidos caindo no
+    padrão, e as 4 telas anteriores ainda de pé); e **12/12 na conferência dos
+    números** contra uma agregação independente lida direto do banco —
+    faturamento, ticket médio, reembolso, chargeback, quantidade e a contagem de
+    cada forma de pagamento, rodada nos dois extremos: com 8 compras e com o
+    banco vazio. Usuário temporário apagado no fim.
+  - **A conferência de números usa `periodo=tudo` de propósito.** Sem recorte de
+    tempo, a comparação não depende de reimplementar a aritmética de fuso do
+    painel no script de teste, e qualquer divergência é da agregação em si — que
+    é o que se quer testar.
+  - **Descoberta operacional:** havia um `next dev` antigo servindo a porta 3001 e
+    outro app na 3000. Um teste HTTP contra a porta errada reprovou `/vendas` e
+    `/leads` com 404 e pareceu um defeito do código novo — não era. Conferir a
+    porta antes de acreditar num 404 em teste local.
 - **2026-09-18:** Revisão de geolocalização e fuso horário. A pergunta de partida
   era se a Vercel já oferecia geo de graça, para trocar "o jeito atual" por ela —
   e a conferência mostrou que **o jeito atual já era a Vercel**: não havia nada

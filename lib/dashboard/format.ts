@@ -64,6 +64,18 @@ export function faltaPara(iso: string, agora = Date.now()): string | null {
   return tempoRelativo(iso, agora)
 }
 
+const MOEDA_CACHE = new Map<string, Intl.NumberFormat>()
+
+/** "R$ 1.234,56" — um formatter por moeda, memorizado (as telas de Leads e Vendas somam valores linha a linha). */
+export function formatarMoeda(valor: number, moeda: string): string {
+  let formatter = MOEDA_CACHE.get(moeda)
+  if (!formatter) {
+    formatter = new Intl.NumberFormat("pt-BR", { style: "currency", currency: moeda })
+    MOEDA_CACHE.set(moeda, formatter)
+  }
+  return formatter.format(valor)
+}
+
 /**
  * O mesmo instante, mas no relógio de quem gerou o evento — o fuso que veio do
  * header `x-vercel-ip-timezone` e está em `events_log.geo_timezone`.

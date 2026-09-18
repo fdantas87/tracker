@@ -125,10 +125,22 @@ export async function POST(
         email: purchase.buyerEmail,
         email_hash: hashEmail(purchase.buyerEmail),
         phone_hash: hashPhone(purchase.buyerPhone, config.defaultPhoneCountry),
+        // Texto puro para a ficha do lead (fase 8b) — os hashes acima seguem
+        // existindo só para o Meta, propósito diferente. Requer a migration
+        // 20260919090000 aplicada ANTES do deploy, ou este upsert inteiro falha.
+        buyer_first_name: purchase.buyerFirstName,
+        buyer_last_name: purchase.buyerLastName,
+        buyer_phone: purchase.buyerPhone,
         product_name: purchase.productName,
         product_id: purchase.productId,
         amount: purchase.amount,
         currency: purchase.currency,
+        // Forma de pagamento para a tela de Vendas (fase 8b). Canônico +
+        // bruto, mesmo par de `status`/`platform_status`. Requer a migration
+        // 20260919120000 aplicada ANTES do deploy, ou este upsert inteiro
+        // falha e a compra deixa de ser registrada.
+        payment_method: purchase.paymentMethod,
+        platform_payment_method: purchase.platformPaymentMethod,
         status: purchase.status,
         platform: adapter.platform,
         platform_status: purchase.platformStatus,

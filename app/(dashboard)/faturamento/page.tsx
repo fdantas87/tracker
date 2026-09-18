@@ -1,19 +1,13 @@
-import { PageHeader, PhasePlaceholder } from "@/components/page-header"
+import { redirect } from "next/navigation"
 
-export const metadata = {
-  title: "Faturamento · Negou Tracking",
-}
-
+/**
+ * A tela de Faturamento virou a de Vendas (fase 8b).
+ *
+ * O redirect fica para não quebrar link salvo nem aba aberta de quem já usava
+ * o caminho antigo — e porque ter duas rotas de receita, ainda que uma delas
+ * fosse só um placeholder, era convite a dois números divergentes na mesma
+ * tela.
+ */
 export default function FaturamentoPage() {
-  return (
-    <>
-      <PageHeader
-        title="Faturamento"
-        description="Receita, ticket médio, reembolsos e a lista de compras."
-      />
-      <PhasePlaceholder phase="fase 8">
-        Alimentado pelas compras que chegam no webhook do PerfectPay (fase 7).
-      </PhasePlaceholder>
-    </>
-  )
+  redirect("/vendas")
 }

@@ -112,6 +112,22 @@ const ORIGENS = [
   { utm_source: null, utm_medium: null, utm_campaign: null, utm_content: null }, // direto
 ]
 
+/**
+ * Nomes fictícios para a coluna "Comprador" da tela de Vendas. Sem eles a
+ * tabela nasceria inteira em branco e não daria para ver o layout real.
+ */
+const PRIMEIROS_NOMES = [
+  "Ana", "Bruno", "Carla", "Diego", "Eduarda", "Felipe", "Gabriela",
+  "Henrique", "Isabela", "João", "Larissa", "Marcelo", "Natália", "Otávio",
+  "Patrícia", "Rafael", "Sofia", "Thiago", "Vanessa", "William",
+]
+
+const SOBRENOMES = [
+  "Almeida", "Barbosa", "Cardoso", "Dias", "Esteves", "Ferreira", "Gomes",
+  "Henriques", "Lima", "Martins", "Nunes", "Oliveira", "Pereira", "Ribeiro",
+  "Santos", "Teixeira", "Vieira",
+]
+
 const escolher = (a) => a[Math.floor(Math.random() * a.length)]
 const inteiro = (min, max) => min + Math.floor(Math.random() * (max - min + 1))
 const chance = (p) => Math.random() < p
@@ -159,10 +175,19 @@ function eventoDeBorda(trck, geo) {
   // Rodando de madrugada (antes de 01:30 UTC), a conta acima cairia no futuro.
   if (tempo > AGORA) tempo -= DIA
 
+  // O conjunto de chaves precisa ser IDÊNTICO ao dos outros eventos: o insert é
+  // um lote só, e o PostgREST recusa o lote inteiro com "All object keys must
+  // match" se um objeto tiver uma chave a menos. Por isso as utm_*, `custom_data`,
+  // `dispatch_claimed_at` e `dispatch_error` aparecem aqui explicitamente nulas
+  // em vez de simplesmente ausentes.
   return {
     trck_user_id: trck,
     event_name: "ViewContent",
     event_id: `${PREFIX}borda-de-fuso`,
+    utm_source: null,
+    utm_medium: null,
+    utm_campaign: null,
+    utm_content: null,
     payload_meta: payloadMeta("ViewContent", tempo),
     response_meta: [
       { pixel_id: "4534042836884934", ok: true, status: 200, body: { events_received: 1 } },
@@ -172,12 +197,15 @@ function eventoDeBorda(trck, geo) {
     created_at: iso(tempo),
     event_time: iso(tempo),
     event_source_url: "https://lp.negou.net/?teste=borda-de-fuso",
+    custom_data: null,
     action_source: "website",
     pixel_fired: false,
     dispatch_status: "sent",
     dispatch_after: iso(tempo + 900_000),
     dispatch_attempts: 1,
+    dispatch_claimed_at: null,
     dispatched_at: iso(tempo + 900_000),
+    dispatch_error: null,
   }
 }
 
@@ -217,7 +245,13 @@ async function semear() {
     const passos = ["PageView"]
     if (chance(0.55)) passos.push("ViewContent")
     if (chance(0.3)) passos.push("InitiateCheckout")
-    const comprou = identificado && chance(0.35)
+    // Comprar NÃO depende de ter se identificado no site, e antes dependia: a
+    // vinculação principal é pelo `trck_user_id` que viaja na URL do checkout,
+    // e ela funciona para quem nunca preencheu formulário nenhum (é justamente
+    // o caso mais comum). Além de mais fiel ao sistema, isso tira o gargalo que
+    // fazia 30 visitantes renderem 2 ou 3 compras e deixava a tela de Vendas
+    // sem dado para conferir gráfico, quebra por pagamento e paginação.
+    const comprou = chance(0.25)
     if (comprou) passos.push("Purchase")
 
     passos.forEach((nome, passo) => {
@@ -279,15 +313,38 @@ async function semear() {
     if (comprou) {
       const tempo = nasceuEm + inteiro(600_000, 3_600_000)
       const estornada = chance(0.12)
+      // Distribuição aproximada do mercado brasileiro de infoproduto: cartão
+      // domina, Pix vem forte, boleto residual. O `null` (8%) existe de
+      // propósito — é a compra cuja forma de pagamento a plataforma não
+      // informou, e sem ela não há como ver o estado "Não informado" da tela,
+      // que é diferente de "Outros".
+      const pagamento = escolher([
+        ["credit_card", "1"],
+        ["credit_card", "1"],
+        ["credit_card", "1"],
+        ["credit_card", "4"],
+        ["pix", "7"],
+        ["pix", "7"],
+        ["pix", "7"],
+        ["billet", "2"],
+        ["other", "11"],
+        ["other", "12"],
+        [null, null],
+      ])
       compras.push({
         transaction_id: `${PREFIX}${randomUUID()}`,
         trck_user_id: trck,
         email: `pessoa${i}@exemplo.test`,
         email_hash: "0".repeat(64),
+        buyer_first_name: escolher(PRIMEIROS_NOMES),
+        buyer_last_name: escolher(SOBRENOMES),
+        buyer_phone: `+55119${inteiro(10_000_000, 99_999_999)}`,
         product_name: escolher(["Método Negou", "Negou — Mentoria", "Negou Anual"]),
         product_id: escolher(["PPLQQ7A7", "PPLQQ8B2"]),
         amount: escolher([97, 197, 297, 497, 997]),
         currency: "BRL",
+        payment_method: pagamento[0],
+        platform_payment_method: pagamento[1],
         status: estornada ? escolher(["refunded", "chargeback"]) : "approved",
         platform: "perfectpay",
         platform_status: estornada ? "7" : "2",
