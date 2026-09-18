@@ -121,6 +121,10 @@ export async function POST(request: Request) {
         geo_country: geo.country,
         geo_region: geo.region,
         geo_city: geo.city,
+        geo_postal_code: geo.postalCode,
+        geo_latitude: geo.latitude,
+        geo_longitude: geo.longitude,
+        geo_timezone: geo.timezone,
       },
       { onConflict: "trck_user_id", ignoreDuplicates: true }
     )
@@ -151,9 +155,16 @@ export async function POST(request: Request) {
           dispatch_status: "pending",
           dispatch_after: dispatchAfter.toISOString(),
           ip: toInetOrNull(geo.ip),
+          // Geo do INSTANTE do evento. Difere do geo atual do visitante quando
+          // a pessoa muda de lugar entre a visita e a compra, e é isso que a
+          // tela de Eventos precisa mostrar.
           geo_country: geo.country,
           geo_region: geo.region,
           geo_city: geo.city,
+          geo_postal_code: geo.postalCode,
+          geo_latitude: geo.latitude,
+          geo_longitude: geo.longitude,
+          geo_timezone: geo.timezone,
         },
         { onConflict: "event_id", ignoreDuplicates: true }
       )

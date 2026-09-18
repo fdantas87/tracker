@@ -5,6 +5,7 @@ import {
   hashCountry,
   hashExternalId,
   hashState,
+  hashZip,
 } from "@/lib/crypto/hash"
 import { META_MAX_EVENTS_PER_REQUEST } from "@/lib/meta/constants"
 import { sendBatchToAllPixels, type MetaEventInput } from "@/lib/meta/capi"
@@ -205,6 +206,10 @@ function toMetaEventInput(
       // Geo é guardado em texto e hasheado só na hora do envio.
       cityHash: hashCity(asString(visitor?.geo_city)),
       stateHash: hashState(asString(visitor?.geo_region)),
+      zipHash: hashZip(
+        asString(visitor?.geo_postal_code),
+        asString(visitor?.geo_country)
+      ),
       countryHash: hashCountry(asString(visitor?.geo_country)),
       externalIdHash: hashExternalId(row.trck_user_id),
       // Texto puro por exigência do Meta: hashear estes quatro não dá erro,

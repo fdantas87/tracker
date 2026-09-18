@@ -12,7 +12,7 @@ import { META_GRAPH_API_BASE, META_REQUEST_TIMEOUT_MS } from "./constants"
  * https://developers.facebook.com/docs/marketing-api/conversions-api/parameters/customer-information-parameters
  *
  * Regras que a doc é explícita e que erram silenciosamente se forem quebradas:
- * - dados pessoais vão HASHEADOS (sha256): em, ph, fn, ln, ct, st, country,
+ * - dados pessoais vão HASHEADOS (sha256): em, ph, fn, ln, ct, st, zp, country,
  *   external_id. Os hashes chegam prontos aqui (gravados no identify) ou são
  *   calculados na hora a partir do geo.
  * - fbp, fbc, client_ip_address e client_user_agent vão em TEXTO PURO. Hashear
@@ -28,6 +28,7 @@ export type MetaUserData = {
   lastNameHash?: string | null
   cityHash?: string | null
   stateHash?: string | null
+  zipHash?: string | null
   countryHash?: string | null
   externalIdHash?: string | null
   /** Texto puro, nunca hasheado. */
@@ -111,6 +112,7 @@ export function buildMetaEvent(input: MetaEventInput): Record<string, unknown> {
     ln: input.userData.lastNameHash,
     ct: input.userData.cityHash,
     st: input.userData.stateHash,
+    zp: input.userData.zipHash,
     country: input.userData.countryHash,
     external_id: input.userData.externalIdHash,
     // Daqui pra baixo, texto puro por exigência do Meta.

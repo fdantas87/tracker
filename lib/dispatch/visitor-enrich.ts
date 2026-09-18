@@ -38,8 +38,12 @@ export async function enrichVisitorFromPurchase(
   const phoneHash = hashPhone(purchase.buyerPhone, defaultPhoneCountry)
   const firstNameHash = hashName(purchase.buyerFirstName)
   const lastNameHash = hashName(purchase.buyerLastName)
+  // O CEP do checkout entra como PII pra valer: é o `zp` da CAPI, e é melhor
+  // que o derivado de IP que o /api/identify gravou. Guardado em texto puro,
+  // como o resto do geo — o hash acontece na hora do envio.
+  const postalCode = purchase.buyerPostalCode
 
-  if (!emailHash && !phoneHash && !firstNameHash && !lastNameHash) {
+  if (!emailHash && !phoneHash && !firstNameHash && !lastNameHash && !postalCode) {
     return NOTHING
   }
 
@@ -57,6 +61,7 @@ export async function enrichVisitorFromPurchase(
       p_phone_hash: phoneHash,
       p_first_name_hash: firstNameHash,
       p_last_name_hash: lastNameHash,
+      p_postal_code: postalCode,
     })
 
     if (error) return NOTHING

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, type ReactNode } from "react"
 import { Archive, FileJson, Loader2 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
@@ -13,8 +13,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { carregarDetalhe } from "@/app/(dashboard)/eventos/actions"
-import { formatarCompleto } from "@/lib/dashboard/format"
-import type { EventDetail } from "@/lib/dashboard/events"
+import { formatarCompleto, formatarHoraNoFuso } from "@/lib/dashboard/format"
+import type { EventDetail, Localizacao } from "@/lib/dashboard/events"
 
 function Json({ valor }: { valor: unknown }) {
   return (
@@ -52,6 +52,53 @@ function Bloco({
         </p>
       )}
     </section>
+  )
+}
+
+/** "São Paulo, SP · BR", pulando o que o geo por IP não resolveu. */
+function Local({ local }: { local: Localizacao }) {
+  const lugar = [local.city, local.region].filter(Boolean).join(", ")
+  const texto = [lugar, local.country].filter(Boolean).join(" · ")
+  if (!texto) return null
+
+  return <Campo titulo="Local">{texto}</Campo>
+}
+
+function Campo({
+  titulo,
+  children,
+  largo = false,
+}: {
+  titulo: string
+  children: ReactNode
+  largo?: boolean
+}) {
+  return (
+    <div className={largo ? "col-span-2 min-w-0 sm:col-span-3" : undefined}>
+      <dt className="text-muted-foreground">{titulo}</dt>
+      <dd className="font-mono tabular-nums">{children}</dd>
+    </div>
+  )
+}
+
+/**
+ * O horário no relógio de quem gerou o evento.
+ *
+ * Aparece SÓ quando o visitante não estava no fuso do painel. Sem isso, um
+ * evento das 23h em Manaus é lido como meia-noite e vira "compra de madrugada"
+ * numa análise de horário de campanha — conclusão errada tirada de dado certo.
+ * E mostrar "mesmo horário" para todo mundo que está em Brasília só ocuparia
+ * espaço.
+ */
+function HoraLocal({ iso, fuso }: { iso: string; fuso: string | null }) {
+  const hora = formatarHoraNoFuso(iso, fuso)
+  if (!hora) return null
+
+  return (
+    <Campo titulo="Hora local do visitante">
+      {hora.horario}{" "}
+      <span className="font-sans text-muted-foreground">{hora.fuso}</span>
+    </Campo>
   )
 }
 
@@ -107,27 +154,33 @@ export function EventDetailDialog({ id, eventName }: { id: string; eventName: st
         ) : detalhe ? (
           <div className="space-y-5">
             <dl className="grid grid-cols-2 gap-3 text-xs sm:grid-cols-3">
-              <div>
-                <dt className="text-muted-foreground">Momento do evento</dt>
-                <dd className="font-mono tabular-nums">
-                  {formatarCompleto(detalhe.eventTime)}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Registrado em</dt>
-                <dd className="font-mono tabular-nums">
-                  {formatarCompleto(detalhe.createdAt)}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-muted-foreground">Origem</dt>
-                <dd className="font-mono">{detalhe.actionSource}</dd>
-              </div>
+              <Campo titulo="Momento do evento">
+                {formatarCompleto(detalhe.eventTime)}
+              </Campo>
+              <Campo titulo="Registrado em">
+                {formatarCompleto(detalhe.createdAt)}
+              </Campo>
+              <Campo titulo="Origem">{detalhe.actionSource}</Campo>
+
+              <HoraLocal iso={detalhe.eventTime} fuso={detalhe.local.timezone} />
+
+              <Local local={detalhe.local} />
+              {detalhe.local.postalCode ? (
+                <Campo titulo="CEP (aproximado)">
+                  {detalhe.local.postalCode}
+                </Campo>
+              ) : null}
+              {detalhe.local.latitude !== null &&
+              detalhe.local.longitude !== null ? (
+                <Campo titulo="Coordenadas">
+                  {detalhe.local.latitude}, {detalhe.local.longitude}
+                </Campo>
+              ) : null}
+
               {detalhe.sourceUrl ? (
-                <div className="col-span-2 min-w-0 sm:col-span-3">
-                  <dt className="text-muted-foreground">URL</dt>
-                  <dd className="truncate font-mono">{detalhe.sourceUrl}</dd>
-                </div>
+                <Campo titulo="URL" largo>
+                  <span className="block truncate">{detalhe.sourceUrl}</span>
+                </Campo>
               ) : null}
             </dl>
 

@@ -61,21 +61,48 @@ async function limparTudo() {
 
 // ---------------------------------------------------------------- dados
 
+/**
+ * [país, UF, cidade, CEP, lat, long, fuso] — o mesmo conjunto que os headers
+ * `x-vercel-ip-*` entregam em produção.
+ *
+ * Manaus e Rio Branco estão aqui de propósito: são os fusos brasileiros que
+ * NÃO são o do painel, e sem pelo menos um deles não há como ver o campo
+ * "hora local do visitante" funcionando. Lisboa cobre o caso de fuso e país
+ * estrangeiros.
+ */
 const CIDADES = [
-  ["BR", "SP", "São Paulo"],
-  ["BR", "SP", "Campinas"],
-  ["BR", "RJ", "Rio de Janeiro"],
-  ["BR", "MG", "Belo Horizonte"],
-  ["BR", "RS", "Porto Alegre"],
-  ["BR", "PR", "Curitiba"],
-  ["BR", "BA", "Salvador"],
-  ["BR", "PE", "Recife"],
-  ["BR", "SC", "Florianópolis"],
-  ["BR", "DF", "Brasília"],
-  ["BR", "CE", "Fortaleza"],
-  ["BR", "GO", "Goiânia"],
-  ["PT", null, "Lisboa"],
+  ["BR", "SP", "São Paulo", "01310-100", -23.5505, -46.6333, "America/Sao_Paulo"],
+  ["BR", "SP", "Campinas", "13015-000", -22.9099, -47.0626, "America/Sao_Paulo"],
+  ["BR", "RJ", "Rio de Janeiro", "20040-020", -22.9068, -43.1729, "America/Sao_Paulo"],
+  ["BR", "MG", "Belo Horizonte", "30130-010", -19.9167, -43.9345, "America/Sao_Paulo"],
+  ["BR", "RS", "Porto Alegre", "90010-150", -30.0346, -51.2177, "America/Sao_Paulo"],
+  ["BR", "PR", "Curitiba", "80010-010", -25.4284, -49.2733, "America/Sao_Paulo"],
+  ["BR", "BA", "Salvador", "40020-000", -12.9777, -38.5016, "America/Bahia"],
+  ["BR", "PE", "Recife", "50010-000", -8.0476, -34.877, "America/Recife"],
+  ["BR", "SC", "Florianópolis", "88010-000", -27.5954, -48.548, "America/Sao_Paulo"],
+  ["BR", "DF", "Brasília", "70040-010", -15.7939, -47.8828, "America/Sao_Paulo"],
+  ["BR", "CE", "Fortaleza", "60010-000", -3.7319, -38.5267, "America/Fortaleza"],
+  ["BR", "GO", "Goiânia", "74003-010", -16.6869, -49.2648, "America/Sao_Paulo"],
+  ["BR", "AM", "Manaus", "69005-040", -3.119, -60.0217, "America/Manaus"],
+  ["BR", "AC", "Rio Branco", "69900-064", -9.9754, -67.8249, "America/Rio_Branco"],
+  ["PT", null, "Lisboa", "1100-148", 38.7223, -9.1393, "Europe/Lisbon"],
 ]
+
+/** Manaus: garantido no primeiro visitante, para o fuso diferente sempre existir. */
+const MANAUS = CIDADES.find((c) => c[2] === "Manaus")
+
+/** As 7 colunas de geo, do jeito que as três tabelas as gravam. */
+function geoDe([pais, uf, cidade, cep, lat, lng, fuso]) {
+  return {
+    geo_country: pais,
+    geo_region: uf,
+    geo_city: cidade,
+    geo_postal_code: cep,
+    geo_latitude: lat,
+    geo_longitude: lng,
+    geo_timezone: fuso,
+  }
+}
 
 const ORIGENS = [
   { utm_source: "facebook", utm_medium: "cpc", utm_campaign: "negou-frio-01", utm_content: "criativo-a" },
@@ -109,6 +136,51 @@ function payloadMeta(nome, tempoMs) {
   }
 }
 
+/**
+ * Um evento às 22:30 de ONTEM no horário de Brasília — ou seja, 01:30 UTC de
+ * hoje.
+ *
+ * Existe só para tornar visível o bug de fuso que esta fase corrigiu, e para
+ * impedir que ele volte sem ninguém perceber. Com o recorte em UTC, este evento
+ * caía dentro do filtro "Hoje" (porque 01:30 UTC de hoje é depois de 00:00 UTC)
+ * enquanto a própria tabela o exibia com a data de ONTEM, e o gráfico o jogava
+ * no balde errado. Com o recorte no fuso do painel, ele fica fora de "Hoje" e
+ * dentro do dia de ontem — que é onde ele aconteceu.
+ */
+function eventoDeBorda(trck, geo) {
+  const agora = new Date(AGORA)
+  let tempo = Date.UTC(
+    agora.getUTCFullYear(),
+    agora.getUTCMonth(),
+    agora.getUTCDate(),
+    1,
+    30
+  )
+  // Rodando de madrugada (antes de 01:30 UTC), a conta acima cairia no futuro.
+  if (tempo > AGORA) tempo -= DIA
+
+  return {
+    trck_user_id: trck,
+    event_name: "ViewContent",
+    event_id: `${PREFIX}borda-de-fuso`,
+    payload_meta: payloadMeta("ViewContent", tempo),
+    response_meta: [
+      { pixel_id: "4534042836884934", ok: true, status: 200, body: { events_received: 1 } },
+    ],
+    ip: "177.0.0.1",
+    ...geo,
+    created_at: iso(tempo),
+    event_time: iso(tempo),
+    event_source_url: "https://lp.negou.net/?teste=borda-de-fuso",
+    action_source: "website",
+    pixel_fired: false,
+    dispatch_status: "sent",
+    dispatch_after: iso(tempo + 900_000),
+    dispatch_attempts: 1,
+    dispatched_at: iso(tempo + 900_000),
+  }
+}
+
 async function semear() {
   const visitantes = []
   const eventos = []
@@ -116,7 +188,8 @@ async function semear() {
 
   // 30 visitantes espalhados pelos últimos 30 dias.
   for (let i = 0; i < 30; i++) {
-    const [pais, uf, cidade] = escolher(CIDADES)
+    const local = i === 0 ? MANAUS : escolher(CIDADES)
+    const geo = geoDe(local)
     const origem = escolher(ORIGENS)
     const nasceuEm = AGORA - inteiro(0, 30) * DIA - inteiro(0, 23) * 3_600_000
     const identificado = chance(0.35)
@@ -135,9 +208,7 @@ async function semear() {
       ip: `177.${inteiro(0, 255)}.${inteiro(0, 255)}.${inteiro(1, 254)}`,
       user_agent:
         "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15",
-      geo_country: pais,
-      geo_region: uf,
-      geo_city: cidade,
+      ...geo,
       created_at: iso(nasceuEm),
       identified_at: identificado ? iso(nasceuEm + 120_000) : null,
     })
@@ -181,9 +252,7 @@ async function semear() {
               ? [{ pixel_id: "4534042836884934", ok: false, status: 400, body: { error: { message: "Invalid parameter" } } }]
               : [{ pixel_id: "4534042836884934", ok: true, status: 200, body: { events_received: 1, fbtrace_id: "Axxxx" } }],
         ip: `177.${inteiro(0, 255)}.${inteiro(0, 255)}.${inteiro(1, 254)}`,
-        geo_country: pais,
-        geo_region: uf,
-        geo_city: cidade,
+        ...geo,
         created_at: iso(tempo),
         event_time: iso(tempo),
         event_source_url: "https://lp.negou.net/",
@@ -223,9 +292,9 @@ async function semear() {
         platform: "perfectpay",
         platform_status: estornada ? "7" : "2",
         ...origem,
-        geo_country: pais,
-        geo_region: uf,
-        geo_city: cidade,
+        geo_country: geo.geo_country,
+        geo_region: geo.geo_region,
+        geo_city: geo.geo_city,
         match_method: "trck_user_id",
         match_found: true,
         meta_event_id: `purchase_${PREFIX}${i}`,
@@ -235,6 +304,8 @@ async function semear() {
       })
     }
   }
+
+  eventos.push(eventoDeBorda(visitantes[0].trck_user_id, geoDe(MANAUS)))
 
   await rest("visitors", { method: "POST", body: JSON.stringify(visitantes) })
   await rest("events_log", { method: "POST", body: JSON.stringify(eventos) })

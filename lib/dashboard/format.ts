@@ -6,12 +6,16 @@
  * evento das 21h apareceria como meia-noite do dia seguinte, e a data no
  * servidor divergiria da data no navegador (hydration mismatch). O negócio é
  * brasileiro, então fixar é mais correto do que adivinhar.
+ *
+ * A constante vem de `./timezone`, que é quem também recorta os períodos e monta
+ * os baldes do gráfico. Ter duas cópias do fuso foi exatamente o que permitiu a
+ * tela renderizar em Brasília e agregar em UTC ao mesmo tempo.
  */
 
-const FUSO = "America/Sao_Paulo"
+import { FUSO_PAINEL } from "./timezone"
 
 const dataHora = new Intl.DateTimeFormat("pt-BR", {
-  timeZone: FUSO,
+  timeZone: FUSO_PAINEL,
   day: "2-digit",
   month: "2-digit",
   hour: "2-digit",
@@ -19,7 +23,7 @@ const dataHora = new Intl.DateTimeFormat("pt-BR", {
 })
 
 const dataHoraCompleta = new Intl.DateTimeFormat("pt-BR", {
-  timeZone: FUSO,
+  timeZone: FUSO_PAINEL,
   dateStyle: "short",
   timeStyle: "medium",
 })
@@ -58,4 +62,37 @@ export function faltaPara(iso: string, agora = Date.now()): string | null {
   const delta = new Date(iso).getTime() - agora
   if (delta <= 0) return null
   return tempoRelativo(iso, agora)
+}
+
+/**
+ * O mesmo instante, mas no relógio de quem gerou o evento — o fuso que veio do
+ * header `x-vercel-ip-timezone` e está em `events_log.geo_timezone`.
+ *
+ * Existe para responder "que horas eram PARA O USUÁRIO", que é diferente de
+ * "que horas eram aqui": um evento de Manaus às 23h de lá aparece como meia-
+ * noite do dia seguinte em Brasília, e ler isso como "compra de madrugada"
+ * levaria a conclusões erradas sobre horário de campanha.
+ *
+ * Devolve null quando não há fuso gravado ou quando ele é o mesmo do painel —
+ * repetir o horário já exibido só ocuparia espaço. Um fuso inválido no banco
+ * faz o `Intl` lançar; aí também devolvemos null, porque um dado sujo não pode
+ * derrubar a tela inteira.
+ */
+export function formatarHoraNoFuso(
+  iso: string,
+  fuso: string | null
+): { horario: string; fuso: string } | null {
+  if (!fuso || fuso === FUSO_PAINEL) return null
+
+  try {
+    const horario = new Intl.DateTimeFormat("pt-BR", {
+      timeZone: fuso,
+      dateStyle: "short",
+      timeStyle: "medium",
+    }).format(new Date(iso))
+
+    return { horario, fuso }
+  } catch {
+    return null
+  }
 }

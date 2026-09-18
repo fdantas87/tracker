@@ -112,6 +112,10 @@ export async function POST(request: Request) {
     geo_country: geo.country,
     geo_region: geo.region,
     geo_city: geo.city,
+    geo_postal_code: geo.postalCode,
+    geo_latitude: geo.latitude,
+    geo_longitude: geo.longitude,
+    geo_timezone: geo.timezone,
     updated_at: new Date().toISOString(),
   }
 

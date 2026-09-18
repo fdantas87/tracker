@@ -22,6 +22,19 @@ import { createServiceClient } from "@/lib/supabase/service"
  * do GA4: a sessão expira com ~30 min de inatividade, então uma compra que
  * chega muito depois da visita pode não casar com a sessão original. Isso é
  * do ecossistema, não do código.
+ *
+ * GEOLOCALIZAÇÃO — `ip_override` NÃO É OPCIONAL AQUI. O GA4 deriva a geografia
+ * do IP de QUEM FEZ A CHAMADA. Num envio server-side esse IP é o da função na
+ * Vercel, não o do comprador: sem `ip_override` toda venda confirmada pelo
+ * webhook cai na região do datacenter, e o relatório de geografia passa a
+ * mentir justamente na métrica que mais importa (receita por região).
+ *
+ * Por que `ip_override` e não `user_location`: com o IP, o Google usa a própria
+ * base de geo — a MESMA que usa nos eventos que chegam pela gtag —, então os
+ * dois caminhos concordam. Com `user_location` a geografia passaria a vir da
+ * base da Vercel e os relatórios misturariam duas fontes. Os dois campos não
+ * convivem: a doc é explícita que `user_location`, quando presente, tem
+ * precedência e o `ip_override` é ignorado. Por isso só um é enviado.
  */
 
 export type Ga4Item = {
@@ -37,6 +50,11 @@ export type Ga4EventInput = {
   eventName: string
   /** Sessão capturada na visita, pra compra cair na sessão certa. */
   sessionId?: string | null
+  /**
+   * IP do VISITANTE, capturado na visita. Ver a nota de geolocalização no topo
+   * do módulo: sem ele a compra é geolocalizada no datacenter da Vercel.
+   */
+  ipOverride?: string | null
   value?: number | null
   currency?: string | null
   transactionId?: string | null
@@ -84,8 +102,12 @@ export function buildGa4Payload(input: Ga4EventInput): Record<string, unknown> {
     }))
   }
 
+  // `ip_override` vai no TOPO do corpo, ao lado de client_id — não dentro de
+  // `params`. Dentro de params ele seria tratado como um parâmetro qualquer do
+  // evento e a geolocalização continuaria errada, sem erro nenhum aparecer.
   return {
     client_id: input.clientId,
+    ...(input.ipOverride ? { ip_override: input.ipOverride } : {}),
     events: [{ name: input.eventName, params }],
   }
 }

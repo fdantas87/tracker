@@ -69,8 +69,9 @@ apps/tracking.negou.net/
 │   ├── settings/dispatch-config.ts         # ✅ fase 7.5 — config memorizada + regra do atraso
 │   ├── dashboard/filters.ts                # ✅ fase 8a — constantes dos filtros (SEM server-only)
 │   ├── dashboard/events.ts                 # ✅ fase 8a — consultas da tela de Eventos (sob RLS)
-│   ├── dashboard/format.ts                 # ✅ fase 8a — data/hora com fuso fixo America/Sao_Paulo
-│   ├── geo.ts                              # ✅ fase 5 — IP real + headers x-vercel-ip-*
+│   ├── dashboard/format.ts                 # ✅ fase 8a — data/hora no fuso do painel
+│   ├── dashboard/timezone.ts               # ✅ revisão geo — FUSO_PAINEL, diaLocal, inicioDoDiaLocal (SEM server-only)
+│   ├── geo.ts                              # ✅ fase 5 — IP real + os 8 headers x-vercel-ip-*
 │   ├── rate-limit.ts                       # ✅ fase 5 — Upstash quando configurado, memória senão
 │   ├── cors.ts                             # ✅ fase 5 — allowlist exata dos endpoints públicos
 │   ├── validation.ts                       # ✅ fase 5 — limpeza de tudo que entra
@@ -95,6 +96,7 @@ apps/tracking.negou.net/
 └── supabase/
     ├── migrations/                          # ✅ fase 2 — SQL das 7 tabelas + RLS + Vault + pg_cron
     │                                        #    fase 5 — rate_limits; fase 7.5 — event_queue
+    │                                        #    revisão geo — geo_enriquecido (8 colunas + fill_visitor_pii)
     ├── verify_phase2.sql                    # ✅ fase 2 — queries de verificação (roda manual, não é migration)
     └── verify_phase7_5.sql                  # ✅ fase 7.5 — 11 checagens da fila (roda manual)
 ```
@@ -280,9 +282,12 @@ um script de terminal.
   19 (`react-hooks/purity`) recusa. Por isso `listEvents()` devolve `agoraMs` — é
   a função de dados que carimba o instante, e a tabela usa isso pra dizer quanto
   falta pro evento pendente sair.
-- **Fuso fixo em `America/Sao_Paulo`** (`lib/dashboard/format.ts`). A Vercel roda
-  em UTC: sem fixar, um evento das 21h apareceria como meia-noite do dia seguinte
-  e a data renderizada no servidor divergiria da do navegador.
+- **Fuso fixo em `America/Sao_Paulo`** — hoje em `lib/dashboard/timezone.ts`, e
+  usado tanto para formatar quanto para recortar e agregar. A Vercel roda em UTC:
+  sem fixar, um evento das 21h apareceria como meia-noite do dia seguinte e a data
+  renderizada no servidor divergiria da do navegador. **Esta fase só fixou o fuso
+  da formatação e deixou o recorte e os baldes em UTC** — ver "Geolocalização e
+  fuso horário" acima, onde isso foi corrigido.
 - **Filtros na URL, não em estado de React.** `?evento=&status=&periodo=&q=&pagina=`.
   Link compartilhável, botão voltar funcionando, página ainda renderizada no
   servidor, zero `useEffect` de busca. Mudar qualquer filtro zera a paginação.
@@ -308,6 +313,89 @@ um script de terminal.
   escreve **direto no Postgres**, sem passar por `/api/event`: como o
   `test_event_code` está vazio, qualquer evento que passasse pelo endpoint
   contaria como real no pixel.
+
+---
+
+## Geolocalização e fuso horário (revisão pós-8a — implementado)
+
+- **A geolocalização É a da Vercel, e sempre foi.** Não existe serviço externo de
+  geoip no projeto: nenhuma dependência, nenhuma chamada, nenhuma credencial. Os
+  headers `x-vercel-ip-*` são resolvidos na borda antes de a função rodar e são
+  **gratuitos em todos os planos** (Hobby, Pro e Enterprise). Se um dia alguém
+  propuser MaxMind/ipinfo/ipapi: custam US$ 20–50/mês, acrescentam credencial e
+  uma chamada de rede no caminho quente de todo `/api/identify`, e o ganho sobre
+  a base da Vercel é marginal.
+- **`@vercel/functions` foi avaliado e recusado.** O `geolocation()` oficial não
+  expõe o `timezone`, e o `region` que ele devolve é a região da Vercel que
+  atendeu a requisição (`gru1`), não a do usuário. Seria uma dependência a mais
+  para ler os mesmos headers com menos informação. `lib/geo.ts` lê direto.
+- **São 8 headers e por muito tempo só 3 eram lidos.** Agora `getGeo()` devolve
+  também `postalCode`, `latitude`, `longitude` e `timezone`. `x-vercel-ip-continent`
+  segue de fora: não há uso num negócio de um país só.
+- **O `zp` do Meta ia vazio.** `ct`/`st`/`country` sempre foram enviados; o CEP
+  não, por falta de exatamente um header. `hashZip(valor, país)` segue a doc:
+  minúsculo, sem espaço e sem traço, e **só os 5 primeiros dígitos quando o país
+  é `US`**. CEP brasileiro vai com os 8 dígitos — cortar em 5 deixaria só o
+  prefixo do bairro e destruiria a precisão justamente onde ela existe.
+- **CEP de IP é sinal fraco; o do checkout é o bom.** O derivado de IP aponta a
+  área do provedor, não o endereço da pessoa. Por isso `buyerPostalCode` entra em
+  `fill_visitor_pii` (que só preenche buraco) e tem precedência no disparo da
+  compra, exatamente como email e telefone.
+- **BUG CORRIGIDO: o GA4 geolocalizava toda compra no datacenter da Vercel.** O
+  Measurement Protocol deriva a geografia do IP de **quem faz a chamada** — num
+  envio server-side, a função. Sem `ip_override` o relatório de receita por
+  região estava simplesmente errado, sem nenhum erro aparecer. `ip_override` vai
+  no **topo** do corpo, ao lado de `client_id`; dentro de `params` ele seria
+  tratado como parâmetro qualquer do evento e nada mudaria. Escolhido em vez de
+  `user_location` porque o Google usa a própria base de geo, a mesma dos eventos
+  que chegam pela gtag — os dois caminhos concordam. **Os dois campos não
+  convivem:** a doc é explícita que `user_location`, quando presente, tem
+  precedência e anula o `ip_override`.
+- **BUG CORRIGIDO: o painel renderizava em Brasília e agregava em UTC.**
+  `periodoInicio()` usava `setHours(0,0,0,0)`, que opera no fuso do **processo**
+  (UTC na Vercel), e a série do gráfico usava `toISOString().slice(0,10)`. Então
+  "Hoje" começava às 21h de ontem no horário de Brasília e trazia eventos que a
+  própria tabela exibia com a data de ontem, e um evento das 22h caía no balde do
+  dia seguinte. `lib/dashboard/timezone.ts` passa a ser a **única** fonte do fuso
+  (`FUSO_PAINEL`), com `diaLocal()` e `inicioDoDiaLocal()`. `format.ts` importa a
+  constante de lá em vez de declarar a sua — ter duas cópias foi o que permitiu a
+  tela se contradizer.
+- **`lib/dashboard/timezone.ts` NÃO tem `server-only`**, pelo mesmo motivo de
+  `filters.ts`: a barra de filtros é Client Component e importa dali.
+- **Os períodos são dias de calendário, não janelas deslizantes.** `hoje: 1`,
+  `7d: 7`, `30d: 30`, e `periodoInicio()` devolve `inicioDoDiaLocal(dias - 1)`.
+  Com janela deslizante o primeiro balde do gráfico nascia sempre parcial, porque
+  ele agrupava por dia enquanto o filtro cortava no meio do dia mais antigo.
+- **`inicioDoDiaLocal` faz duas passadas de offset de propósito.** O offset certo
+  é o do instante ALVO, não o de agora. O Brasil não tem horário de verão desde
+  2019, então hoje dá no mesmo — mas se voltar a ter, uma passada só erraria em
+  uma hora nos dois dias de transição, em silêncio.
+- **O fuso do painel é fixo; o do visitante é dado.** São coisas diferentes. O
+  painel agrega sempre em `America/Sao_Paulo` (é o que faz servidor e navegador
+  concordarem sobre onde um dia começa); o `geo_timezone` do evento aparece no
+  modal como "hora local do visitante", e **só quando difere** do fuso do painel.
+  Sem isso, um evento das 23h em Manaus é lido como meia-noite e vira "compra de
+  madrugada" numa análise de horário — conclusão errada tirada de dado certo.
+- **O `track.js` continua sem mandar fuso nenhum.** O `Intl` do navegador seria
+  mais preciso que o derivado de IP, mas quebraria a invariante da fase 5 ("geo é
+  sempre resolvido no servidor", com teste cobrindo) e obrigaria a republicar o
+  script em todos os sites. O header resolve sem isso.
+- **`events_log` guarda o geo do INSTANTE do evento**, duplicando o de `visitors`
+  de propósito — já era assim para country/region/city. Quem compra em viagem tem
+  o PageView num lugar e o Purchase em outro, e cada linha precisa mostrar onde
+  ela aconteceu. O disparo, esse, continua lendo `visitors` na hora do envio.
+
+### ⚠️ Ordem obrigatória: migration ANTES do deploy (de novo)
+
+`20260918120000_geo_enriquecido.sql` acrescenta 8 colunas e troca a assinatura de
+`fill_visitor_pii`. `/api/identify` e `/api/event` passam a gravar essas colunas —
+**sem a migration aplicada, os dois devolvem 500 e a captura para por completo**,
+igual à fase 7.5. Rode no SQL Editor primeiro, depois faça o deploy.
+
+`create or replace` **não** adiciona parâmetro a uma função: cria uma sobrecarga, e
+aí o PostgREST passa a recusar a chamada por ambiguidade. Por isso a migration faz
+`drop function` antes. O parâmetro novo vai no fim e tem default, então as chamadas
+posicionais de `verify_phase7_5.sql` continuam válidas.
 
 ---
 
@@ -365,6 +453,7 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - ✅ ~~Enviar o projeto ao GitHub~~ — feito; `main` está sincronizado com `origin/main`. **Mas `git push` não é o que publica**: o que está no ar subiu pela Vercel CLI. Para publicar uma fase nova, refaça o deploy do mesmo jeito.
 - ✅ ~~Instalar o `track.js` na LP~~ — feito, está em `apps/lp.negou.net/app/layout.tsx` e responde no ar. Falta instalar nos outros subdomínios que devam ser rastreados (`quiz.negou.net` ainda não resolve DNS).
 - ✅ ~~Gerar o primeiro dado real~~ — feito em 2026-09-18: uma visita à LP criou o visitante e o PageView, com `fbp`, IP, geo (`São Paulo/SP`) e `pixel_fired = false` (visitante anônimo, modo adaptativo), entrando na fila com a janela de 15 min. Foi essa visita que revelou o bug do `ga_client_id`.
+- ⏳ **Rodar a migration `20260918120000_geo_enriquecido.sql` ANTES do próximo deploy** — ela acrescenta as 8 colunas de geo e troca a assinatura de `fill_visitor_pii`. Sem ela, `/api/identify` e `/api/event` devolvem 500 e a captura para. Depois do deploy, conferir numa visita real que `visitors.geo_postal_code`, `geo_timezone` e `geo_latitude` vieram preenchidos; se o CEP vier nulo no Brasil, é cobertura do fornecedor e não defeito do código — o CEP do checkout continua valendo.
 - **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase.
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
 
@@ -410,6 +499,33 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-09-18:** Revisão de geolocalização e fuso horário. A pergunta de partida
+  era se a Vercel já oferecia geo de graça, para trocar "o jeito atual" por ela —
+  e a conferência mostrou que **o jeito atual já era a Vercel**: não havia nada
+  para substituir, havia headers sendo ignorados. `lib/geo.ts` passou a ler os 4
+  headers que faltavam (`postal-code`, `latitude`, `longitude`, `timezone`), 8
+  colunas novas em `visitors`/`events_log`, `hashZip` preenchendo o `zp` da CAPI
+  (que ia vazio), `lib/dashboard/timezone.ts` como fonte única do fuso, e o modal
+  de Eventos mostrando localização e hora local do visitante.
+  - **Dois bugs de dado achados no caminho, nenhum dos dois gerava erro:** (1) o
+    GA4 geolocalizava toda compra do webhook no datacenter da Vercel, por falta de
+    `ip_override`; (2) o painel renderizava em `America/Sao_Paulo` mas recortava
+    período e montava os baldes do gráfico em UTC, então "Hoje" começava às 21h de
+    ontem e um evento das 22h caía no dia seguinte do gráfico enquanto a tabela o
+    exibia com a data de hoje.
+  - **Descoberta que mudou uma decisão:** a normalização de `zp` do Meta manda
+    usar "só os 5 primeiros dígitos" — mas a regra é **explicitamente para os
+    EUA**. Aplicá-la ao Brasil cortaria o CEP de 8 dígitos em 5 e jogaria fora a
+    precisão de rua, ficando só com o prefixo do bairro. Por isso `hashZip` recebe
+    o país e a regra dos 5 dígitos só vale para `US`.
+  - Verificado: build e lint limpos, `check-server-actions` OK, 9/9 no teste de
+    mesa do fuso com o processo em UTC (incluindo virada de mês e o caso exato de
+    22:30 BRT que estava errado), 12/12 na normalização de CEP contra SHA-256
+    conhecido (BR, EUA com ZIP+4, Reino Unido alfanumérico), 13/13 na forma dos
+    payloads (`zp` dentro de `user_data`, `ip_override` no topo e **não** dentro de
+    `params`) e 16/16 na leitura dos headers (cidade percent-encoded, coordenada
+    malformada virando null em vez de NaN, ausência total de headers fora da
+    Vercel). Falta a conferência ao vivo, que depende da migration e do deploy.
 - **2026-09-18:** Fase 8a — tela de Eventos. `lib/dashboard/{filters,events,format}.ts`, `app/(dashboard)/eventos/{page,actions}.tsx` e 6 componentes em `components/dashboard/`. `recharts` entrou via `npx shadcn add chart` (junto com `table` e `popover`); `calendar` foi dispensado em favor de períodos fixos (Hoje/7d/30d/Tudo), que cobrem o uso real sem arrastar `react-day-picker` + `date-fns`. Verificado: build e lint limpos, `hooks/use-mobile.ts` intacto depois do `shadcn add`, e **20/20 num teste autenticado real** (usuário temporário pela Admin API, login pela `@supabase/ssr`, as 3 páginas carregando, guarda de rota redirecionando sem sessão, filtros e paginação pela URL, estado vazio, e busca com os separadores do PostgREST — `a,b)(*` — sem quebrar a query). Usuário temporário apagado no fim.
   - **Revisão do estado real da fase 7.5:** a seção de pendências afirmava que a produção estava com o código anterior e que havia 30 commits não enviados. As duas coisas estavam desatualizadas — conferido ao vivo: `track.js` no ar com os mesmos 31.696 bytes do repo, `/api/cron/dispatch` devolvendo 401, `verify:dispatch` TUDO CERTO e `main` sincronizado com `origin/main`.
   - **Descoberta que custou tempo:** passar o query builder do Supabase por um genérico próprio (`aplicar<T extends {gte,eq,or}>`) faz o TypeScript estourar em "type instantiation is excessively deep". O erro aponta pro `.select()` e manda investigar a string de colunas, que não tem nada a ver — com `select("*")` o erro é o mesmo.

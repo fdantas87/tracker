@@ -8,6 +8,7 @@ import {
   hashName,
   hashPhone,
   hashState,
+  hashZip,
 } from "@/lib/crypto/hash"
 import { sendToAllGa4 } from "@/lib/ga4/mp"
 import { sendToAllPixels } from "@/lib/meta/capi"
@@ -91,6 +92,17 @@ export async function dispatchPurchase(
           hashName(purchase.buyerLastName) ?? asString(visitor?.last_name_hash),
         cityHash: hashCity(asString(visitor?.geo_city)),
         stateHash: hashState(asString(visitor?.geo_region)),
+        // CEP do checkout na frente do derivado de IP, pela mesma razão do
+        // email e do telefone: um é o que a pessoa digitou, o outro é a área do
+        // provedor de internet dela.
+        // O país só decide a regra dos 5 dígitos dos EUA; nenhuma plataforma
+        // usada aqui manda país, então o do visitante é a única pista, e a
+        // ausência dele já cai no comportamento certo para o Brasil (CEP
+        // inteiro).
+        zipHash: hashZip(
+          purchase.buyerPostalCode ?? asString(visitor?.geo_postal_code),
+          asString(visitor?.geo_country)
+        ),
         countryHash: hashCountry(asString(visitor?.geo_country)),
         externalIdHash: purchase.trckUserId
           ? hashExternalId(purchase.trckUserId)
@@ -108,6 +120,9 @@ export async function dispatchPurchase(
       clientId: gaClientId ?? "",
       eventName: "purchase",
       sessionId: asString(visitor?.ga_session_id),
+      // Sem isto o GA4 geolocaliza a venda no datacenter da Vercel, porque é
+      // deste servidor que a chamada parte. Ver a nota no topo de lib/ga4/mp.ts.
+      ipOverride: asString(visitor?.ip),
       value: purchase.amount,
       currency: purchase.currency,
       transactionId: purchase.transactionId,

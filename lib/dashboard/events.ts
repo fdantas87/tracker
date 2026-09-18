@@ -10,6 +10,7 @@ import {
   type EventFilters,
   type SeriePonto,
 } from "@/lib/dashboard/filters"
+import { diaLocal, inicioDoDiaLocal } from "@/lib/dashboard/timezone"
 
 /**
  * Leitura da tela de Eventos.
@@ -244,18 +245,21 @@ export async function getSerieDiaria(filtros: EventFilters): Promise<SeriePonto[
 
   // Preenche o intervalo inteiro antes, para que um dia sem evento apareça como
   // zero em vez de sumir e encurtar o gráfico.
+  //
+  // Os baldes são dias do FUSO DO PAINEL, não dias UTC. Com
+  // `toISOString().slice(0,10)` — como era antes — um evento das 22h em
+  // Brasília caía no balde do dia seguinte, enquanto a mesma linha na tabela
+  // aparecia com a data de hoje.
   const cfg = PERIODOS[filtros.periodo] ?? PERIODOS[PERIODO_PADRAO]
   if (cfg.dias !== null) {
-    for (let i = cfg.dias; i >= 0; i--) {
-      const d = new Date()
-      d.setDate(d.getDate() - i)
-      const chave = d.toISOString().slice(0, 10)
+    for (let i = cfg.dias - 1; i >= 0; i--) {
+      const chave = diaLocal(inicioDoDiaLocal(i))
       porDia.set(chave, { dia: chave, enviados: 0, outros: 0 })
     }
   }
 
   for (const row of data as { event_time: string; dispatch_status: DispatchStatus }[]) {
-    const chave = row.event_time.slice(0, 10)
+    const chave = diaLocal(row.event_time)
     const ponto = porDia.get(chave) ?? { dia: chave, enviados: 0, outros: 0 }
     if (row.dispatch_status === "sent") ponto.enviados += 1
     else ponto.outros += 1
@@ -279,6 +283,17 @@ export async function getEventNames(): Promise<string[]> {
   return [...new Set((data as { event_name: string }[]).map((r) => r.event_name))].sort()
 }
 
+export type Localizacao = {
+  country: string | null
+  region: string | null
+  city: string | null
+  postalCode: string | null
+  latitude: number | null
+  longitude: number | null
+  /** Fuso IANA do visitante, para exibir o horário no relógio DELE. */
+  timezone: string | null
+}
+
 export type EventDetail = {
   eventId: string
   eventName: string
@@ -286,6 +301,8 @@ export type EventDetail = {
   createdAt: string
   actionSource: string
   sourceUrl: string | null
+  /** Onde o visitante estava no instante DESTE evento. */
+  local: Localizacao
   customData: unknown
   payloadMeta: unknown
   responseMeta: unknown
@@ -307,7 +324,7 @@ export async function getEventDetail(id: string): Promise<EventDetail | null> {
   const { data, error } = await supabase
     .from("events_log")
     .select(
-      "event_id,event_name,event_time,created_at,action_source,event_source_url,custom_data,payload_meta,response_meta,payload_ga4,response_ga4"
+      "event_id,event_name,event_time,created_at,action_source,event_source_url,geo_country,geo_region,geo_city,geo_postal_code,geo_latitude,geo_longitude,geo_timezone,custom_data,payload_meta,response_meta,payload_ga4,response_ga4"
     )
     .eq("id", id)
     .maybeSingle()
@@ -323,6 +340,15 @@ export async function getEventDetail(id: string): Promise<EventDetail | null> {
     createdAt: data.created_at as string,
     actionSource: data.action_source as string,
     sourceUrl: data.event_source_url as string | null,
+    local: {
+      country: data.geo_country as string | null,
+      region: data.geo_region as string | null,
+      city: data.geo_city as string | null,
+      postalCode: data.geo_postal_code as string | null,
+      latitude: data.geo_latitude as number | null,
+      longitude: data.geo_longitude as number | null,
+      timezone: data.geo_timezone as string | null,
+    },
     customData: data.custom_data,
     payloadMeta: data.payload_meta,
     responseMeta: data.response_meta,

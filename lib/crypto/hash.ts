@@ -107,6 +107,34 @@ export function hashState(state: string | null | undefined): string | null {
   return normalized ? sha256(normalized) : null
 }
 
+/**
+ * CEP / zip: minúsculo, sem espaço e sem traço.
+ *
+ * A doc do Meta abre exceção só pros Estados Unidos ("Use only the first 5
+ * digits for U.S. zip codes"), onde o sufixo ZIP+4 é ruído. Fora dos EUA o
+ * código vai inteiro — um CEP brasileiro são 8 dígitos ("01310-100" ->
+ * "01310100"), e cortar em 5 deixaria só o prefixo do bairro, destruindo a
+ * precisão justamente onde ela existe.
+ *
+ * O país vem separado porque é `visitors.geo_country` (ISO-2) que decide, e não
+ * o formato do próprio CEP: "94035" é um zip americano e também o começo de um
+ * CEP brasileiro.
+ */
+export function hashZip(
+  zip: string | null | undefined,
+  country: string | null | undefined
+): string | null {
+  if (!zip) return null
+
+  const normalized = zip.toLowerCase().replace(/[^a-z0-9]/g, "")
+  if (!normalized) return null
+
+  const isUS = country?.trim().toLowerCase().slice(0, 2) === "us"
+  const final = isUS ? normalized.slice(0, 5) : normalized
+
+  return final ? sha256(final) : null
+}
+
 /** País: código ISO de 2 letras, minúsculo. */
 export function hashCountry(country: string | null | undefined): string | null {
   if (!country) return null

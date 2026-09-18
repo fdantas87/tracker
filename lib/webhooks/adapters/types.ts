@@ -33,6 +33,14 @@ export type NormalizedPurchase = {
   buyerPhone: string | null
   buyerFirstName: string | null
   buyerLastName: string | null
+  /**
+   * CEP digitado no checkout, quando a plataforma repassa.
+   *
+   * Vale mais que o CEP derivado de IP (`visitors.geo_postal_code`), que aponta
+   * a área do provedor e não o endereço da pessoa. É o `zp` da Conversions API
+   * do Meta, um parâmetro de correspondência a mais.
+   */
+  buyerPostalCode: string | null
 
   /** Nosso trck_user_id, quando a plataforma repassou o parâmetro do checkout. */
   trckUserId: string | null

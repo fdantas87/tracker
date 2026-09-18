@@ -7,6 +7,20 @@ import "server-only"
  * custo, sem API externa, sem outra credencial pra guardar. Fora da Vercel
  * (localhost, outro host) esses headers não existem e o geo fica nulo, o que
  * é tratado como normal: geo é enriquecimento, nunca requisito.
+ *
+ * SÃO OITO HEADERS, e por muito tempo só três eram lidos. Todos são gratuitos
+ * em TODOS os planos (Hobby, Pro e Enterprise) desde o changelog "IP
+ * Geolocation now available for all plans", e resolvidos na borda antes da
+ * função rodar — nenhum custo por requisição, nenhuma cota.
+ *
+ * POR QUE NÃO `geolocation()` DO @vercel/functions: o helper oficial devolve
+ * city/country/countryRegion/latitude/longitude/postalCode, mas NÃO expõe o
+ * timezone, e o `region` que ele devolve é a região da Vercel que atendeu a
+ * requisição (ex.: "gru1"), não a do usuário. Seria uma dependência a mais para
+ * ler os mesmos headers com menos informação.
+ *
+ * `x-vercel-ip-continent` fica de fora de propósito: não há uso para ele num
+ * negócio de um país só.
  */
 
 export type GeoInfo = {
@@ -14,6 +28,12 @@ export type GeoInfo = {
   country: string | null
   region: string | null
   city: string | null
+  /** Aproximado: é a área do provedor, não o endereço da pessoa. */
+  postalCode: string | null
+  latitude: number | null
+  longitude: number | null
+  /** Fuso IANA, ex.: "America/Manaus". */
+  timezone: string | null
 }
 
 /**
@@ -35,8 +55,14 @@ export function getGeo(headers: Headers): GeoInfo {
     ip: getClientIp(headers),
     country: headers.get("x-vercel-ip-country") || null,
     region: headers.get("x-vercel-ip-country-region") || null,
-    // A Vercel manda a cidade percent-encoded ("S%C3%A3o%20Paulo").
+    // A Vercel manda a cidade percent-encoded ("S%C3%A3o%20Paulo"). O CEP passa
+    // pelo mesmo tratamento por garantia: custa nada e cobre formatos com
+    // espaço em países que usam.
     city: decodeHeader(headers.get("x-vercel-ip-city")),
+    postalCode: decodeHeader(headers.get("x-vercel-ip-postal-code")),
+    latitude: toCoordinate(headers.get("x-vercel-ip-latitude")),
+    longitude: toCoordinate(headers.get("x-vercel-ip-longitude")),
+    timezone: headers.get("x-vercel-ip-timezone") || null,
   }
 }
 
@@ -47,6 +73,16 @@ function decodeHeader(value: string | null): string | null {
   } catch {
     return value
   }
+}
+
+/**
+ * `geo_latitude`/`geo_longitude` são `double precision` no Postgres. Um header
+ * malformado não pode derrubar a captura — mesma postura de `toInetOrNull`.
+ */
+function toCoordinate(value: string | null): number | null {
+  if (!value) return null
+  const num = Number(value)
+  return Number.isFinite(num) ? num : null
 }
 
 /**

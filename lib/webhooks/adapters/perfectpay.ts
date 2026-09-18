@@ -185,6 +185,14 @@ function parse(body: Record<string, unknown>): AdapterResult {
         cleanString(customer.telephone, LIMITS.shortText),
       buyerFirstName: first,
       buyerLastName: last,
+      // Mesma postura do telefone acima: o exemplo da doc não traz endereço,
+      // mas contas com entrega física mandam. Aceitamos os nomes prováveis sem
+      // exigir nenhum — vindo nulo, o CEP derivado de IP continua valendo.
+      buyerPostalCode:
+        cleanString(customer.zip_code, LIMITS.shortText) ??
+        cleanString(customer.postal_code, LIMITS.shortText) ??
+        cleanString(customer.address_zip_code, LIMITS.shortText) ??
+        cleanString(customer.cep, LIMITS.shortText),
 
       trckUserId: findTrckUserId(metadata),
 
