@@ -353,6 +353,32 @@
     }
   }
 
+  /**
+   * Manda o ga_client_id assim que ele existir.
+   *
+   * O cookie _ga só é criado depois que o gtag.js baixa e executa — ou seja,
+   * SEMPRE depois do nosso primeiro /api/identify. Sem isto, todo visitante de
+   * primeira viagem ficava com ga_client_id nulo, e a compra do webhook (que
+   * reusa esse id pra cair na sessão certa) virava tráfego direto órfão no
+   * GA4. Justamente o caso mais comum: visita, checkout e compra na mesma
+   * sessão.
+   *
+   * `gtag('get', ...)` é a API oficial e enfileira o callback até o script
+   * estar pronto, então não há polling nem palpite de timing. O reenvio só
+   * acontece se o primeiro identify foi mesmo sem o id, e o /api/identify
+   * nunca apaga campo com valor nulo, então repetir é seguro.
+   */
+  function backfillGaClientId(measurementIds) {
+    if (!measurementIds.length || getGaClientId()) return
+
+    var enviado = false
+    window.gtag("get", measurementIds[0], "client_id", function (clientId) {
+      if (enviado || !clientId || !getGaClientId()) return
+      enviado = true
+      postJson("/api/identify", visitorPayload(null))
+    })
+  }
+
   function loadPixel(pixelIds) {
     if (!pixelIds.length) return
 
@@ -874,6 +900,10 @@
         return result
       }
     )
+
+    // Depois do identify inicial: se o _ga ainda não existia, busca o
+    // client_id no gtag e completa o visitante quando ele aparecer.
+    backfillGaClientId(state.ga4)
 
     if (state.forms) watchForms()
 
