@@ -174,7 +174,7 @@ async function dispatchClaimed(rows: EventRow[]): Promise<DrainResult> {
       continue
     }
 
-    await markSent(chunk, dispatch)
+    await markSent(chunk, dispatch, config.testEventCode)
     result.sent += chunk.length
   }
 
@@ -221,13 +221,20 @@ function toMetaEventInput(
  * Guarda o payload enviado e a resposta de cada destino, linha a linha.
  *
  * É esse par que responde "esse evento chegou no Meta?" sem depender do Events
- * Manager, e é o que a tela de Eventos (fase 8) mostra. Cada evento guarda o
- * SEU objeto, não o lote inteiro — o lote pode ter 50 eventos de visitantes
- * diferentes.
+ * Manager, e é o que a tela de Eventos (fase 8) mostra.
+ *
+ * FORMATO: `{ data: [evento], test_event_code }`, o MESMO que
+ * `buildMetaPayload` sempre produziu e que o disparo da compra grava. A
+ * requisição de verdade pode ter levado até 50 eventos juntos, mas cada linha
+ * guarda só o seu — gravar o lote inteiro em cada uma duplicaria tudo 50 vezes.
+ * O `response_meta` é a resposta do lote, porque o Meta responde por
+ * requisição, não por evento. Manter uma forma só aqui é o que evita a tela de
+ * Eventos ter que adivinhar de onde a linha veio.
  */
 async function markSent(
   rows: EventRow[],
-  dispatch: Awaited<ReturnType<typeof sendBatchToAllPixels>>
+  dispatch: Awaited<ReturnType<typeof sendBatchToAllPixels>>,
+  testEventCode: string | null
 ): Promise<void> {
   const supabase = createServiceClient()
   const payloads = new Map(
@@ -236,18 +243,25 @@ async function markSent(
   const dispatchedAt = new Date().toISOString()
 
   await Promise.allSettled(
-    rows.map((row) =>
-      supabase
+    rows.map((row) => {
+      const event = payloads.get(row.event_id)
+      const payload = event
+        ? testEventCode
+          ? { data: [event], test_event_code: testEventCode }
+          : { data: [event] }
+        : null
+
+      return supabase
         .from("events_log")
         .update({
           dispatch_status: "sent",
           dispatched_at: dispatchedAt,
           dispatch_error: null,
-          payload_meta: payloads.get(row.event_id) ?? null,
+          payload_meta: payload,
           response_meta: dispatch.results,
         })
         .eq("id", row.id)
-    )
+    })
   )
 }
 
