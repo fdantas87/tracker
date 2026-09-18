@@ -341,6 +341,15 @@ um script de terminal.
   área do provedor, não o endereço da pessoa. Por isso `buyerPostalCode` entra em
   `fill_visitor_pii` (que só preenche buraco) e tem precedência no disparo da
   compra, exatamente como email e telefone.
+- **MEDIDO EM PRODUÇÃO: no Brasil o `x-vercel-ip-postal-code` vem com 5 dígitos,
+  não 8.** Um IP de São Paulo devolveu `01000` — o prefixo do CEP, não o CEP.
+  Consequência honesta: o `zp` derivado de IP gera `sha256("01000")` e
+  **praticamente nunca vai casar** com o CEP de 8 dígitos que o Meta tem do
+  comprador. Ele continua sendo enviado (um parâmetro que não casa não subtrai
+  dos outros, e há bases que também guardam CEP grosso), mas **quem vai fazer o
+  `zp` valer é o CEP do checkout**, pelo caminho do webhook. Não interprete um
+  `zp` presente como "correspondência por CEP funcionando". O mesmo vale, em
+  menor grau, para `ct`: a cidade do IP é a da saída do provedor.
 - **BUG CORRIGIDO: o GA4 geolocalizava toda compra no datacenter da Vercel.** O
   Measurement Protocol deriva a geografia do IP de **quem faz a chamada** — num
   envio server-side, a função. Sem `ip_override` o relatório de receita por
@@ -453,7 +462,7 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - ✅ ~~Enviar o projeto ao GitHub~~ — feito; `main` está sincronizado com `origin/main`. **Mas `git push` não é o que publica**: o que está no ar subiu pela Vercel CLI. Para publicar uma fase nova, refaça o deploy do mesmo jeito.
 - ✅ ~~Instalar o `track.js` na LP~~ — feito, está em `apps/lp.negou.net/app/layout.tsx` e responde no ar. Falta instalar nos outros subdomínios que devam ser rastreados (`quiz.negou.net` ainda não resolve DNS).
 - ✅ ~~Gerar o primeiro dado real~~ — feito em 2026-09-18: uma visita à LP criou o visitante e o PageView, com `fbp`, IP, geo (`São Paulo/SP`) e `pixel_fired = false` (visitante anônimo, modo adaptativo), entrando na fila com a janela de 15 min. Foi essa visita que revelou o bug do `ga_client_id`.
-- ⏳ **Rodar a migration `20260918120000_geo_enriquecido.sql` ANTES do próximo deploy** — ela acrescenta as 8 colunas de geo e troca a assinatura de `fill_visitor_pii`. Sem ela, `/api/identify` e `/api/event` devolvem 500 e a captura para. Depois do deploy, conferir numa visita real que `visitors.geo_postal_code`, `geo_timezone` e `geo_latitude` vieram preenchidos; se o CEP vier nulo no Brasil, é cobertura do fornecedor e não defeito do código — o CEP do checkout continua valendo.
+- ✅ ~~Rodar a migration `20260918120000_geo_enriquecido.sql` e publicar a revisão de geo/fuso~~ — feito em 2026-09-18, nesta ordem. Migration aplicada e conferida no SQL Editor (8 colunas com os tipos certos; `fill_visitor_pii` com **uma só** assinatura, de 7 parâmetros — sem sobrecarga), deploy por `vercel --prod` e conferência ao vivo passando. Falta ainda confirmar o `purchase` no GA4 na primeira venda real (pendência herdada da fase 7).
 - **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase.
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
 
@@ -525,7 +534,18 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
     payloads (`zp` dentro de `user_data`, `ip_override` no topo e **não** dentro de
     `params`) e 16/16 na leitura dos headers (cidade percent-encoded, coordenada
     malformada virando null em vez de NaN, ausência total de headers fora da
-    Vercel). Falta a conferência ao vivo, que depende da migration e do deploy.
+    Vercel).
+  - **Aplicado e publicado no mesmo dia**, migration primeiro. Conferência ao
+    vivo contra `tracking.negou.net` em produção: `/api/identify` e `/api/event`
+    respondendo 200 com as colunas novas (o que prova que migration e código
+    casam), geo real chegando completo (`BR / SP / São Paulo / 01000 /
+    -23.5475,-46.6361 / America/Sao_Paulo`), evento ficando na fila em vez de ir
+    ao Meta, `track.js` no ar com os mesmos 33.004 bytes do repositório,
+    `/api/cron/dispatch` devolvendo 401 sem token e com token errado, e o
+    visitante e o evento de teste apagados no fim.
+  - **Achado da conferência ao vivo:** o CEP de IP no Brasil vem com 5 dígitos.
+    Ver a nota em "Geolocalização e fuso horário" — o `zp` derivado de IP
+    dificilmente casa, e quem vai fazê-lo valer é o CEP do checkout.
 - **2026-09-18:** Fase 8a — tela de Eventos. `lib/dashboard/{filters,events,format}.ts`, `app/(dashboard)/eventos/{page,actions}.tsx` e 6 componentes em `components/dashboard/`. `recharts` entrou via `npx shadcn add chart` (junto com `table` e `popover`); `calendar` foi dispensado em favor de períodos fixos (Hoje/7d/30d/Tudo), que cobrem o uso real sem arrastar `react-day-picker` + `date-fns`. Verificado: build e lint limpos, `hooks/use-mobile.ts` intacto depois do `shadcn add`, e **20/20 num teste autenticado real** (usuário temporário pela Admin API, login pela `@supabase/ssr`, as 3 páginas carregando, guarda de rota redirecionando sem sessão, filtros e paginação pela URL, estado vazio, e busca com os separadores do PostgREST — `a,b)(*` — sem quebrar a query). Usuário temporário apagado no fim.
   - **Revisão do estado real da fase 7.5:** a seção de pendências afirmava que a produção estava com o código anterior e que havia 30 commits não enviados. As duas coisas estavam desatualizadas — conferido ao vivo: `track.js` no ar com os mesmos 31.696 bytes do repo, `/api/cron/dispatch` devolvendo 401, `verify:dispatch` TUDO CERTO e `main` sincronizado com `origin/main`.
   - **Descoberta que custou tempo:** passar o query builder do Supabase por um genérico próprio (`aplicar<T extends {gte,eq,or}>`) faz o TypeScript estourar em "type instantiation is excessively deep". O erro aponta pro `.select()` e manda investigar a string de colunas, que não tem nada a ver — com `select("*")` o erro é o mesmo.
