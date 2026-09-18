@@ -8,7 +8,9 @@
     "start": "next start",
     "lint": "eslint",
     "check:actions": "node scripts/check-server-actions.mjs",
-    "verify:dispatch": "node scripts/verify-dispatch.mjs"
+    "verify:dispatch": "node scripts/verify-dispatch.mjs",
+    "seed": "node scripts/seed-events.mjs",
+    "seed:limpar": "node scripts/seed-events.mjs --limpar"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
@@ -21,6 +23,7 @@
     "radix-ui": "^1.6.7",
     "react": "19.2.8",
     "react-dom": "19.2.8",
+    "recharts": "^3.8.0",
     "server-only": "^0.0.1",
     "shadcn": "^4.21.0",
     "sonner": "^2.0.8",

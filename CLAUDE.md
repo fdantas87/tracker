@@ -34,7 +34,8 @@ apps/tracking.negou.net/
 │   ├── (auth)/login/                       # ✅ fase 3 — page.tsx + login-form.tsx, único ponto de entrada, sem signup
 │   ├── (dashboard)/                        # ✅ fase 3 — layout autenticado + nav; páginas ainda são placeholders
 │   │   ├── page.tsx                        # Visão geral        [conteúdo real: fase 8]
-│   │   ├── eventos/page.tsx                # [fase 8]
+│   │   ├── eventos/page.tsx                # ✅ fase 8a — tabela, chips, gráfico, filtros na URL
+│   │   ├── eventos/actions.ts              # ✅ fase 8a — carrega o payload só quando o modal abre
 │   │   ├── faturamento/page.tsx            # [fase 8]
 │   │   ├── campanhas/page.tsx              # [fase 9]
 │   │   ├── geo/page.tsx                    # [fase 8]
@@ -66,6 +67,9 @@ apps/tracking.negou.net/
 │   ├── dispatch/visitor-enrich.ts          # ✅ fase 7.5 — PII da compra -> visitors, e libera a fila
 │   ├── settings/dispatch-modes.ts          # ✅ fase 7.5 — modos e rótulos (módulo comum)
 │   ├── settings/dispatch-config.ts         # ✅ fase 7.5 — config memorizada + regra do atraso
+│   ├── dashboard/filters.ts                # ✅ fase 8a — constantes dos filtros (SEM server-only)
+│   ├── dashboard/events.ts                 # ✅ fase 8a — consultas da tela de Eventos (sob RLS)
+│   ├── dashboard/format.ts                 # ✅ fase 8a — data/hora com fuso fixo America/Sao_Paulo
 │   ├── geo.ts                              # ✅ fase 5 — IP real + headers x-vercel-ip-*
 │   ├── rate-limit.ts                       # ✅ fase 5 — Upstash quando configurado, memória senão
 │   ├── cors.ts                             # ✅ fase 5 — allowlist exata dos endpoints públicos
@@ -74,8 +78,11 @@ apps/tracking.negou.net/
 │   ├── webhooks/adapters/{index,types,perfectpay}.ts  # ✅ fase 7 — formato normalizado por plataforma
 │   └── dispatch/purchase-dispatch.ts       # ✅ fase 7 — Purchase pro Meta + GA4
 ├── components/
-│   ├── ui/                                 # ✅ shadcn (button, card, badge, separator, switch, sidebar, sheet, dropdown-menu, input, label, alert, tooltip, skeleton)
+│   ├── ui/                                 # ✅ shadcn (button, card, badge, separator, switch, sidebar, sheet, dropdown-menu, input, label, alert, tooltip, skeleton, table, popover, chart)
 │   ├── settings/dispatch-tab.tsx           # ✅ fase 7.5 — modo, janela, formulários, token do cron, fila
+│   ├── dashboard/                          # ✅ fase 8a — events-table, events-filters, events-chart,
+│   │                                       #    status-chips, dispatch-status-badge, event-detail-dialog,
+│   │                                       #    pagination-links
 │   ├── dashboard-sidebar.tsx               # ✅ fase 3 — navegação (drawer no celular, sidebar no desktop)
 │   ├── user-menu.tsx                       # ✅ fase 3 — conta + sair
 │   ├── page-header.tsx                     # ✅ fase 3 — cabeçalho e placeholder de fase
@@ -84,6 +91,7 @@ apps/tracking.negou.net/
 ├── hooks/use-mobile.ts                     # ✅ fase 3 — reescrito com useSyncExternalStore (ver "Autenticação e shell")
 ├── public/track.js                         # ✅ fase 5 — script embutível nos sites (identidade, gtag, pixel, decoração de links)
 ├── scripts/check-server-actions.mjs        # ✅ fase 4 — roda no build, ver "Credenciais e destinos"
+├── scripts/seed-events.mjs                 # ✅ fase 8a — npm run seed / seed:limpar
 └── supabase/
     ├── migrations/                          # ✅ fase 2 — SQL das 7 tabelas + RLS + Vault + pg_cron
     │                                        #    fase 5 — rate_limits; fase 7.5 — event_queue
@@ -240,6 +248,68 @@ No instante do PageView o sistema só conhece cookie, IP e geo. Email, nome e te
 
 ---
 
+## Tela de Eventos (fase 8a — implementado)
+
+A primeira das quatro telas do dashboard, e de propósito a primeira: é a única
+que tem valor com o banco quase vazio, porque ela responde *"esse evento saiu?"*
+sem abrir o SQL Editor. Antes dela, a única prova de vida da fila da fase 7.5 era
+um script de terminal.
+
+- **Leitura sob RLS, não `service_role`.** `lib/dashboard/events.ts` usa
+  `createClient()` (anon + cookies). As policies `select using (true)` de
+  `events_log`/`visitors`/`purchases` existem desde a fase 2 justamente para
+  isso. `lib/settings/queries.ts` usa `service_role` por outro motivo (as tabelas
+  de credencial não têm policy de SELECT nenhuma) — **não copie aquele padrão
+  para as telas de dado.**
+- **Dois módulos, não um.** Constantes e tipos dos filtros moram em
+  `lib/dashboard/filters.ts`, sem `server-only`; `events.ts` (que importa
+  `server-only`) fica só com as consultas. Se a barra de filtros, que é Client
+  Component, importar uma constante de `events.ts`, o bundler arrasta o módulo
+  inteiro pro cliente e o build morre com *"'server-only' cannot be imported from
+  a Client Component module"*. Mesmo motivo de `lib/settings/dispatch-modes.ts`
+  existir.
+- **Não passe o query builder do Supabase por um genérico seu.** A primeira
+  versão tinha um helper `aplicar<T extends {gte,eq,or}>(q: T)` e o TypeScript
+  estourava com *"type instantiation is excessively deep and possibly infinite"*.
+  O erro aponta para a linha do `.select()`, o que faz parecer que o culpado é a
+  string de colunas — não é: com `select("*")` acontece igual. A solução é
+  `condicoesDe()` devolver condições como dados e cada consulta aplicá-las num
+  `for`, sem genérico nenhum no meio.
+- **`Date.now()` não pode ser chamado dentro de um componente.** O lint do React
+  19 (`react-hooks/purity`) recusa. Por isso `listEvents()` devolve `agoraMs` — é
+  a função de dados que carimba o instante, e a tabela usa isso pra dizer quanto
+  falta pro evento pendente sair.
+- **Fuso fixo em `America/Sao_Paulo`** (`lib/dashboard/format.ts`). A Vercel roda
+  em UTC: sem fixar, um evento das 21h apareceria como meia-noite do dia seguinte
+  e a data renderizada no servidor divergiria da do navegador.
+- **Filtros na URL, não em estado de React.** `?evento=&status=&periodo=&q=&pagina=`.
+  Link compartilhável, botão voltar funcionando, página ainda renderizada no
+  servidor, zero `useEffect` de busca. Mudar qualquer filtro zera a paginação.
+- **Os chips de contagem ignoram o filtro de status** (e só ele). Se contassem o
+  status selecionado, os outros chips zerariam e deixariam de servir como
+  navegação.
+- **`skipped` é cinza, nunca vermelho nem âmbar.** Não é erro: é o evento com
+  mais de 6 dias que `claim_pending_events` descarta de propósito, porque um
+  `event_time` velho faz o Meta rejeitar o lote inteiro. O tooltip diz isso com
+  todas as letras. Mesma lição da fase 4, onde um resultado esperado pintado de
+  âmbar foi reportado como falha.
+- **Payload vazio precisa dizer por quê.** `purge_old_event_payloads()` zera os 4
+  jsonb depois de 14 dias; sem uma mensagem explícita o modal vazio parece
+  "o disparo não aconteceu". O mesmo vale pro GA4, que legitimamente não é
+  acionado em evento de navegador.
+- **A série do gráfico é agregada em JS, não em SQL.** Uma função de agregação
+  exigiria migration nova (aplicada à mão no SQL Editor) e não valia travar a
+  tela nisso. Só duas colunas são trazidas, com teto de 20k linhas. Se o volume
+  passar disso, o certo é virar RPC.
+- **`npm run seed` / `npm run seed:limpar`** (`scripts/seed-events.mjs`) criam e
+  removem dados de demonstração para desenvolver as telas. Tudo que ele cria tem
+  `trck_user_id` começando em `seed_`, e é só isso que o `--limpar` apaga. Ele
+  escreve **direto no Postgres**, sem passar por `/api/event`: como o
+  `test_event_code` está vazio, qualquer evento que passasse pelo endpoint
+  contaria como real no pixel.
+
+---
+
 ## Convenções
 
 ### Git & Commits
@@ -275,7 +345,9 @@ No instante do PageView o sistema só conhece cookie, IP e geo. Email, nome e te
 6. ✅ **Disparo Meta CAPI + GA4 Measurement Protocol** — envio para todos os destinos ativos via `after()`, com a resposta de cada um gravada no log do evento (ver "Disparo server-side"). O módulo do GA4 está pronto mas só é chamado pelo webhook, na fase 7.
 7. ✅ **Webhook de compra** — `/api/webhook/compra/[platform]` com adaptador do PerfectPay, vinculação da venda com a visita, idempotência com trava atômica e Purchase disparado pro Meta e pro GA4 (ver "Webhook de compra")
 7.5. ✅ **Disparo atrasado com retroalimentação** — fila no Postgres, modo híbrido adaptativo no `track.js`, captura de formulário, enriquecimento do visitante pela compra e pg_cron drenando a fila (ver "Disparo atrasado")
-8. ⏳ Dashboard: Visão geral, Eventos, Faturamento, Geo — **mostrar `dispatch_status`, `dispatch_attempts` e `dispatch_error`** na tela de Eventos: é o que responde "esse evento saiu?" sem abrir o banco
+8a. ✅ **Dashboard — tela de Eventos** — tabela com `dispatch_status`/`dispatch_attempts`/`dispatch_error`, chips de contagem, gráfico diário e modal de payload (ver "Tela de Eventos")
+8b. ⏳ Dashboard: Visão geral (funil) + Faturamento
+8c. ⏳ Dashboard: Geo — mapa do Brasil com `react-simple-maps`
 9. ⏳ Campanhas (Meta Ads Insights + ROAS/CPA)
 10. ⏳ Auditoria de segurança e publicação
 
@@ -288,13 +360,11 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - ✅ ~~Criar um usuário do painel no Supabase Studio~~ — feito; 2 contas cadastradas, ambas com email confirmado.
 - ✅ ~~Limpar o `test_event_code`~~ — feito pelo usuário em 2026-09-17, confirmado no banco (`null`). Se voltar a preencher pra testar, lembrar de limpar de novo: enquanto tiver valor, nenhum evento conta pra atribuição ou otimização.
 - ✅ ~~Rodar a migration `20260917170000_rate_limits.sql`~~ — feito; confirmado em 2026-09-17 via REST (`bump_rate_limit` responde 200).
-- **Fase 7.5 — 3 passos, nesta ordem:**
-  1. Supabase → Database → Extensions → habilitar **`pg_net`** (é ela que deixa o Postgres chamar uma URL).
-  2. Rodar `migrations/20260917190000_event_queue.sql` no SQL Editor, e depois `verify_phase7_5.sql` pra conferir. **Antes do deploy** — ver o aviso de ordem obrigatória na seção "Disparo atrasado".
-  3. ✅ ~~Gerar o token do cron~~ — feito (está no Vault). Falta o **deploy** do código da fase 7.5 e, só depois dele, preencher a **URL do cron** no painel (aba Disparo). Enquanto a URL estiver vazia, `tick_event_queue()` sai quieto e a fila não drena. Confira com `npm run verify:dispatch`.
-- **A produção está com o código ANTERIOR à fase 7.5** (verificado em 2026-09-17: `/api/cron/dispatch` dá 404 e o `track.js` no ar tem 14.670 bytes contra 31.696 do repositório). E **nada deste projeto foi enviado ao GitHub**: `origin/master` está no commit inicial, com 30 commits locais pendentes. O que está no ar subiu por outro caminho (Vercel CLI), então `git push` não é o que publica — refaça o deploy do mesmo jeito que foi feito.
+- ✅ ~~Fase 7.5: habilitar `pg_net`, rodar `20260917190000_event_queue.sql`, gerar o token do cron, fazer o deploy e preencher a URL do cron~~ — **tudo feito**. Reverificado em 2026-09-18: `track.js` em produção com os mesmos 31.696 bytes do repositório, `/api/cron/dispatch` respondendo 401 sem token, e `npm run verify:dispatch -- --so-configuracao` dizendo TUDO CERTO (modo `adaptive`, janela 15 min, token no Vault, fila zerada).
+- ✅ ~~Enviar o projeto ao GitHub~~ — feito; `main` está sincronizado com `origin/main`. **Mas `git push` não é o que publica**: o que está no ar subiu pela Vercel CLI. Para publicar uma fase nova, refaça o deploy do mesmo jeito.
+- ✅ ~~Instalar o `track.js` na LP~~ — feito, está em `apps/lp.negou.net/app/layout.tsx` e responde no ar. Falta instalar nos outros subdomínios que devam ser rastreados (`quiz.negou.net` ainda não resolve DNS).
+- **Gerar o primeiro dado real**: abrir `https://lp.negou.net` em um navegador de verdade (curl não executa o `track.js`). Até agora `visitors`/`events_log`/`purchases` nunca receberam um registro que não fosse de teste — as telas do painel estão sendo construídas contra o `npm run seed`.
 - **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase.
-- **Instalar o `track.js` nos sites** depois do deploy: `<script src="https://tracking.negou.net/track.js" defer></script>` em `lp.negou.net` (e nos outros subdomínios que devam ser rastreados).
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
 
 ---
@@ -315,6 +385,11 @@ npm run verify:dispatch
 npm run verify:dispatch -- --test-code TEST12345   # inclui o teste ao vivo
 npm run verify:dispatch -- --so-configuracao       # só a conferência
 
+# Dados de demonstração para desenvolver as telas do painel (fase 8).
+# Escreve direto no Postgres, sem passar pelo /api/event — nada chega ao Meta.
+npm run seed            # ~30 visitantes, ~60 eventos nos 5 estados, compras
+npm run seed:limpar     # apaga só o que ele criou (trck_user_id "seed_*")
+
 npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 ```
 
@@ -334,6 +409,10 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-09-18:** Fase 8a — tela de Eventos. `lib/dashboard/{filters,events,format}.ts`, `app/(dashboard)/eventos/{page,actions}.tsx` e 6 componentes em `components/dashboard/`. `recharts` entrou via `npx shadcn add chart` (junto com `table` e `popover`); `calendar` foi dispensado em favor de períodos fixos (Hoje/7d/30d/Tudo), que cobrem o uso real sem arrastar `react-day-picker` + `date-fns`. Verificado: build e lint limpos, `hooks/use-mobile.ts` intacto depois do `shadcn add`, e **20/20 num teste autenticado real** (usuário temporário pela Admin API, login pela `@supabase/ssr`, as 3 páginas carregando, guarda de rota redirecionando sem sessão, filtros e paginação pela URL, estado vazio, e busca com os separadores do PostgREST — `a,b)(*` — sem quebrar a query). Usuário temporário apagado no fim.
+  - **Revisão do estado real da fase 7.5:** a seção de pendências afirmava que a produção estava com o código anterior e que havia 30 commits não enviados. As duas coisas estavam desatualizadas — conferido ao vivo: `track.js` no ar com os mesmos 31.696 bytes do repo, `/api/cron/dispatch` devolvendo 401, `verify:dispatch` TUDO CERTO e `main` sincronizado com `origin/main`.
+  - **Descoberta que custou tempo:** passar o query builder do Supabase por um genérico próprio (`aplicar<T extends {gte,eq,or}>`) faz o TypeScript estourar em "type instantiation is excessively deep". O erro aponta pro `.select()` e manda investigar a string de colunas, que não tem nada a ver — com `select("*")` o erro é o mesmo.
+  - **O banco nunca recebeu um registro real.** Tudo que existe hoje veio do `npm run seed`. A tela está correta contra dado sintético que cobre os 5 estados de disparo; a primeira visita de verdade à LP é o que falta pra fechar o ciclo.
 - **2026-09-17:** Fase 7.5 — disparo atrasado com retroalimentação. Fila de despacho em `events_log` (11 colunas novas + índice parcial), reivindicação atômica com `for update skip locked`, liberação antecipada na conversão, `pg_cron` + `pg_net` acordando `/api/cron/dispatch`, envio em lote de até 50 eventos por requisição, modo híbrido adaptativo no `track.js`, `negou.identify()` + farejador de formulário, e escrita da PII da compra de volta no visitante. Verificado: build e lint limpos, `node --check` no `track.js`, 13/13 casos de normalização de telefone, 15/15 casos do farejador (inclusive PAN com Luhn em campo de telefone, formulário de login e `action` de checkout, todos recusados), painel carregando autenticado nas 3 páginas com a aba nova presente e o usuário temporário apagado, e o `phone_hash` gravado pelo `/api/identify` batendo com o SHA-256 de `5511987654321` contra o banco real. O banco ficou limpo.
   - **Descoberta que mudou o desenho:** a doc de deduplicação do Meta diz, literalmente, que o evento que chega **depois** é descartado e que ele prefere o que chegou primeiro. Ou seja, atrasar a CAPI mantendo o pixel disparando na hora joga fora justamente o evento enriquecido. A técnica só funciona se o pixel não disparar aquele evento — daí o modo adaptativo.
   - **Bug pré-existente corrigido:** `hashPhone` nunca punha o código do país, então todo telefone brasileiro gerava um hash que o Meta jamais casaria — silenciosamente. Os `phone_hash` gravados antes disso são inúteis pro Meta.
