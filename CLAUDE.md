@@ -559,6 +559,47 @@ Publicar o código novo sem a variável preenchida derruba a captura do deploy
 inteiro — inclusive o da própria Negou. Preencha na Vercel primeiro, depois
 publique.
 
+- **Próximo passo acordado: a allowlist deve sair da variável e ir para o
+  painel.** Uma coluna `allowed_origins` em `settings`, editável em
+  Configurações, lida com o mesmo memo de 60s de
+  `lib/settings/dispatch-config.ts`. A variável **não** some: ela vira bootstrap
+  e rede de segurança, porque uma falha de leitura do banco tem que falhar
+  fechado, e falhar fechado sem fallback derrubaria a captura. Allowlist final =
+  variável ∪ banco. `corsHeaders()` passa a ser assíncrona (3 rotas públicas
+  precisam de `await`).
+
+### ⚠️ Produção PRECISA ser pública (Deployment Protection da Vercel)
+
+**Aconteceu de verdade, em 2026-09-19:** o Deployment Protection do projeto
+estava com `ssoProtection.deploymentType = "all"`, então **todo** o domínio —
+`/track.js`, `/api/config/public`, `/api/identify`, `/api/event` — respondia
+`302` para `vercel.com/sso-api`. O script nunca carregava e a captura ficou
+zerada, sem um único erro em lugar nenhum.
+
+O que torna esse bug traiçoeiro é **quem consegue testá-lo**: o navegador de
+quem tem acesso ao projeto carrega uma sessão SSO da Vercel, atravessa a
+proteção e vê o painel funcionar normalmente. Só o visitante anônimo é barrado —
+exatamente o único que importa para a captura. Conclusão prática: **testar
+tracking logado no painel não prova nada**; tem que ser janela anônima.
+
+A configuração certa é *Vercel Authentication → Only Preview Deployments*
+(`deploymentType: "preview"`). Não é frouxidão: os endpoints de captura são
+públicos por contrato de arquitetura, e o painel continua atrás do `proxy.ts` e
+da segunda checagem no `app/(dashboard)/layout.tsx`. Conferir com
+`vercel project protection`, e o `npm run verify:captura` pega isso na primeira
+checagem.
+
+### ⚠️ `.env.local` não tem os segredos (variável "Secret" na Vercel)
+
+Variável marcada como **Secret** na Vercel **não desce em texto puro** no
+`vercel env pull` — o arquivo recebe o literal `[SENSITIVE]`. Hoje isso vale
+para `TRACKING_ALLOWED_ORIGINS` e `SUPABASE_SERVICE_ROLE_KEY`, o que significa
+que `npm run dev` e os scripts que leem `.env.local` (`verify:dispatch`, `seed`)
+**não funcionam** com o arquivo recém-puxado: o Supabase devolve
+`401 Invalid API key`. Não é credencial errada nem projeto trocado — é o valor
+que nunca chegou. Preencha à mão os valores reais no `.env.local` local, ou
+mude o tipo da variável na Vercel se ela não precisar ser Secret.
+
 ---
 
 ## Convenções
@@ -638,6 +679,13 @@ npm run verify:dispatch
 npm run verify:dispatch -- --test-code TEST12345   # inclui o teste ao vivo
 npm run verify:dispatch -- --so-configuracao       # só a conferência
 
+# Verifica a CAPTURA do ponto de vista de um visitante anônimo: o track.js está
+# público (pega Deployment Protection ligado), o CORS libera cada domínio do
+# cliente, e o /api/config/public responde com os destinos. Rodar depois de todo
+# deploy — é a checagem que falta quando "parou de rastrear e ninguém viu".
+npm run verify:captura
+npm run verify:captura -- --origem https://lp.cliente.com --origem https://cliente.com
+
 # Dados de demonstração para desenvolver as telas do painel (fase 8).
 # Escreve direto no Postgres, sem passar pelo /api/event — nada chega ao Meta.
 npm run seed            # ~30 visitantes, ~60 eventos nos 5 estados, compras
@@ -662,6 +710,41 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-09-19:** Incidente — a captura da LP parou por completo. **Eram dois bugs
+  empilhados, e o segundo só ficou visível depois de corrigir o primeiro.**
+  - **(1) Deployment Protection da Vercel com `deploymentType: "all"`.** Todo o
+    domínio, inclusive `/track.js`, respondia `302` para `vercel.com/sso-api`. O
+    script nunca carregava.
+  - **(2) `TRACKING_ALLOWED_ORIGINS` sem nenhum domínio válido em produção.** Com a
+    allowlist hardcoded removida no commit `d508c42`, sobrou só
+    `tracking.negou.net` — e por acidente, porque `ownOrigin()` o acrescenta
+    sozinho. Uma sonda origem a origem (preflight com cada domínio candidato)
+    foi o que revelou isso sem precisar ler o valor da variável, que estava
+    ilegível.
+  - **A lição que mais importa: testar tracking logado no painel não prova nada.**
+    Quem tem sessão na Vercel atravessa o Deployment Protection e vê tudo
+    funcionando. Só o visitante anônimo é barrado — exatamente o único que
+    importa. Toda verificação de captura tem que ser em janela anônima.
+  - **Diagnóstico por ausência é o problema central desta classe de bug.** Nenhum
+    dos dois defeitos gerou erro: o `post()` do `track.js` engole falha de rede,
+    o endpoint chega a responder 200, e quem recusa é o navegador. Daí o
+    `npm run verify:captura` (novo), que olha os três pontos pela ótica do
+    visitante anônimo e diz o que clicar em cada falha.
+  - **Corrigido também:** o Root Directory do projeto Vercel apontava para
+    `apps/tracking.negou.net` num repositório standalone — inerte enquanto os
+    deploys são por CLI, mas quebraria no dia em que o Git fosse conectado.
+  - **Dois defeitos de tooling achados no caminho:** (1) variável marcada como
+    **Secret** na Vercel não desce no `vercel env pull` — o arquivo recebe o
+    literal `[SENSITIVE]`, e o Supabase devolve `401 Invalid API key` sem que
+    nada indique que o valor simplesmente não chegou (`TRACKING_ALLOWED_ORIGINS`
+    virou tipo *Config* por isso; a service_role continua Secret e precisa ser
+    colada à mão); (2) o parser de `.env.local` do `verify-dispatch.mjs` não
+    tirava as aspas que o `vercel env pull` escreve, e a URL do Supabase saía
+    com aspas no meio (`Invalid URL`).
+  - Verificado ao vivo: `verify:captura` passando nas 3 checagens para os 3
+    domínios, e uma visita real em janela anônima gerando o PageView com geo
+    (`São Paulo/SP`), `pixel_fired = false` e entrada na fila com a janela de
+    15 min — o comportamento certo do modo adaptativo para visitante anônimo.
 - **2026-09-19:** Fase 8b — tela de Vendas. `lib/dashboard/{vendas,vendas-filters}.ts`,
   `app/(dashboard)/vendas/{page,actions}.tsx` e 5 componentes novos em
   `components/dashboard/` (`stat-card`, `vendas-filters`, `vendas-table`,

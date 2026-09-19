@@ -38,7 +38,12 @@ const env = Object.fromEntries(
     .filter((l) => l.includes("=") && !l.trim().startsWith("#"))
     .map((l) => {
       const i = l.indexOf("=")
-      return [l.slice(0, i).trim(), l.slice(i + 1).trim()]
+      // O `vercel env pull` escreve os valores entre aspas. Sem tirá-las, a URL
+      // do Supabase sai com aspas no meio e o fetch falha com "Invalid URL".
+      return [
+        l.slice(0, i).trim(),
+        l.slice(i + 1).trim().replace(/^["']|["']$/g, ""),
+      ]
     })
 )
 

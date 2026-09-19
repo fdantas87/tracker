@@ -101,8 +101,18 @@ https://cliente-a.com.br,https://www.cliente-a.com.br,https://lp.cliente-a.com.b
 
 1. **Settings → Domains** → adicione `tracking.cliente-a.com.br`.
 2. Aponte o CNAME no DNS do cliente.
-3. Faça o deploy.
-4. Confira: `https://tracking.cliente-a.com.br/api/config/public` responde JSON,
+3. **Settings → Deployment Protection → Vercel Authentication** → deixe em
+   **"Only Preview Deployments"**.
+
+   ⚠️ **Passo que já derrubou a captura inteira em produção.** No padrão
+   *Standard Protection* a proteção vale para **todos** os deployments, e aí
+   `/track.js` e os endpoints de captura respondem `302` para o login da Vercel.
+   Nenhum visitante anônimo consegue carregar o script. E você **não percebe
+   testando logado**: seu navegador tem sessão na Vercel, atravessa a proteção e
+   mostra o painel funcionando. Confira com `vercel project protection` — o
+   esperado é `"deploymentType": "preview"`.
+4. Faça o deploy.
+5. Confira: `https://tracking.cliente-a.com.br/api/config/public` responde JSON,
    e `/api/cron/dispatch` responde **401** sem token (se responder 200, pare e
    investigue).
 
@@ -140,12 +150,18 @@ define para onde os eventos vão.
 ## 10. Verificar de ponta a ponta
 
 ```bash
+npm run verify:captura -- --origem https://lp.cliente-a.com.br
 npm run verify:dispatch -- --so-configuracao
 ```
 
-Depois, no navegador: abra o site do cliente, confira em **Network** que
-`/api/identify` responde 200 (**não** um erro de CORS), e veja o visitante
-aparecer em **Leads** e o PageView em **Eventos** no painel.
+O primeiro olha a captura como um visitante anônimo olha: o `track.js` está
+público, o CORS libera cada domínio do cliente, e o painel tem destinos
+cadastrados. O segundo confere a fila.
+
+Depois, no navegador, **em janela anônima** (logado você atravessa o Deployment
+Protection e o teste mente): abra o site do cliente, confira em **Network** que
+`/track.js` responde 200 e que `/api/identify` responde 200 (**não** um erro de
+CORS), e veja o visitante aparecer em **Leads** e o PageView em **Eventos**.
 
 ---
 
@@ -153,7 +169,8 @@ aparecer em **Leads** e o PageView em **Eventos** no painel.
 
 | Sintoma | Causa provável |
 |---|---|
-| Zero eventos, `/api/identify` falha com erro de CORS | O site não está em `TRACKING_ALLOWED_ORIGINS` |
+| Zero eventos, e `/track.js` responde 302 para `vercel.com/sso-api` | Deployment Protection ligado em Produção (passo 7.3) |
+| Zero eventos, `/api/identify` falha com erro de CORS | O site não está em `TRACKING_ALLOWED_ORIGINS`, ou a variável mudou sem redeploy |
 | Zero eventos, `/api/identify` responde 500 | Migrations não aplicadas |
 | Eventos aparecem, mas ficam `pending` para sempre | URL/token do cron não configurados, ou `pg_net` desabilitado |
 | Eventos saem, mas o Meta não casa ninguém | Pixel não cadastrado, ou token de CAPI sem permissão |
@@ -167,7 +184,9 @@ aparecer em **Leads** e o PageView em **Eventos** no painel.
 - [ ] Usuário do painel criado e confirmado
 - [ ] Projeto Vercel criado
 - [ ] 6 variáveis preenchidas, `TRACKING_ALLOWED_ORIGINS` inclusive
+- [ ] Deployment Protection em "Only Preview Deployments"
 - [ ] Domínio apontado, deploy feito, `/api/cron/dispatch` devolvendo 401
+- [ ] `npm run verify:captura` passando
 - [ ] Pixels/GA4 cadastrados e testados no painel
 - [ ] URL e token do cron preenchidos **depois** do deploy
 - [ ] `webhook_token` gerado e cadastrado na plataforma de pagamento
