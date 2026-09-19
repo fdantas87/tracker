@@ -1,8 +1,11 @@
 /**
- * Negou Tracking — script de captura.
+ * Script de captura do painel de tracking.
  *
- * Como usar, em qualquer site do grupo:
- *   <script src="https://tracking.negou.net/track.js" defer></script>
+ * Como usar, em qualquer site do cliente (o src aponta para o tracker DELE):
+ *   <script src="https://tracking.seudominio.com/track.js" defer></script>
+ *
+ * O domínio do src é o que define para onde os eventos vão — ver API_BASE
+ * abaixo. O mesmo arquivo serve todos os clientes, sem edição.
  *
  * O que ele faz sozinho:
  * - resolve o trck_user_id (URL > cookie > localStorage > gera um novo)
@@ -70,12 +73,26 @@
 
   // A base da API sai do src deste próprio script, então o mesmo arquivo
   // funciona em qualquer ambiente sem precisar editar nada.
-  var scriptEl = document.currentScript
+  // `document.currentScript` é null quando o script é injetado de forma
+  // assíncrona (gerenciador de tags, por exemplo), então há um segundo caminho
+  // que procura a própria tag pelo src.
+  var scriptEl =
+    document.currentScript ||
+    (function () {
+      var todos = document.getElementsByTagName("script")
+      for (var i = todos.length - 1; i >= 0; i--) {
+        if (todos[i].src && todos[i].src.indexOf("/track.js") !== -1) return todos[i]
+      }
+      return null
+    })()
+
+  // ÚLTIMO recurso é a própria origem da página, NUNCA um domínio fixo: um
+  // domínio fixo mandaria os eventos deste cliente para o tracker de outro.
   var API_BASE = (function () {
     try {
       return new URL(scriptEl.src).origin
     } catch {
-      return "https://tracking.negou.net"
+      return location.origin
     }
   })()
 
@@ -95,13 +112,43 @@
   }
 
   /**
-   * Grava no domínio registrável (.negou.net) pra o mesmo visitante ser
-   * reconhecido em lp., quiz., blog. etc. sem depender de cookie de terceiro.
+   * O domínio mais AMPLO em que o navegador aceita gravar o cookie, pra o mesmo
+   * visitante ser reconhecido em lp., blog., loja. etc. sem cookie de terceiro.
+   *
+   * POR QUE NÃO É `hostname.slice(-2)`: pegar os dois últimos rótulos só
+   * funciona em domínio de dois níveis (`negou.net`). Num `cliente.com.br` isso
+   * produz `.com.br`, que é um sufixo público — e o navegador simplesmente
+   * IGNORA a atribuição, sem lançar erro. O resultado era um cookie que nunca
+   * era gravado, em silêncio, em praticamente todo cliente brasileiro: a
+   * identidade caía só no localStorage e não atravessava subdomínio.
+   *
+   * Em vez de embutir a lista de sufixos públicos (que muda e é enorme), a
+   * gente TESTA: grava uma sonda do mais amplo pro mais específico e fica no
+   * primeiro que o navegador aceitou de verdade. Resolvido uma vez por página.
    */
-  function rootDomain() {
-    var parts = location.hostname.split(".")
-    if (parts.length < 2) return location.hostname
-    return "." + parts.slice(-2).join(".")
+  var _cookieDomain
+  function cookieDomain() {
+    if (_cookieDomain !== undefined) return _cookieDomain
+    _cookieDomain = null
+
+    var host = location.hostname
+    // IP literal ou host de um rótulo só (localhost): cookie de host mesmo.
+    if (host.indexOf(".") === -1 || /^[\d.]+$/.test(host)) return _cookieDomain
+
+    var parts = host.split(".")
+    var sonda = "_trck_probe"
+    for (var i = parts.length - 2; i >= 0; i--) {
+      var candidato = "." + parts.slice(i).join(".")
+      document.cookie =
+        sonda + "=1; path=/; SameSite=Lax; domain=" + candidato
+      if (getCookie(sonda) === "1") {
+        document.cookie =
+          sonda + "=; Max-Age=0; path=/; domain=" + candidato
+        _cookieDomain = candidato
+        return _cookieDomain
+      }
+    }
+    return _cookieDomain
   }
 
   function setCookie(name, value, days) {
@@ -110,11 +157,8 @@
       name + "=" + encodeURIComponent(value) + "; expires=" + expires + "; path=/; SameSite=Lax"
     if (location.protocol === "https:") base += "; Secure"
 
-    try {
-      document.cookie = base + "; domain=" + rootDomain()
-    } catch {
-      document.cookie = base
-    }
+    var dominio = cookieDomain()
+    document.cookie = dominio ? base + "; domain=" + dominio : base
   }
 
   function storageGet(key) {
@@ -347,8 +391,8 @@
 
     window.gtag("js", new Date())
     for (var i = 0; i < measurementIds.length; i++) {
-      // cookie_domain 'auto' faz o _ga ficar em .negou.net, então o mesmo
-      // client_id vale em todos os subdomínios.
+      // cookie_domain 'auto' deixa o _ga no domínio registrável, então o
+      // mesmo client_id vale em todos os subdomínios do cliente.
       window.gtag("config", measurementIds[i], { cookie_domain: "auto" })
     }
   }

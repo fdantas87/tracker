@@ -1,7 +1,8 @@
 import { PageHeader, PhasePlaceholder } from "@/components/page-header"
+import { pageTitle } from "@/lib/branding"
 
 export const metadata = {
-  title: "Geo · Negou Tracking",
+  title: pageTitle("Geo"),
 }
 
 export default function GeoPage() {

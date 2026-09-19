@@ -1,6 +1,7 @@
 import { Suspense } from "react"
 import { AlertCircle } from "lucide-react"
 
+import { pageTitle } from "@/lib/branding"
 import { PageHeader } from "@/components/page-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -26,7 +27,7 @@ import {
 } from "@/lib/dashboard/filters"
 
 export const metadata = {
-  title: "Eventos · Negou Tracking",
+  title: pageTitle("Eventos"),
 }
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>

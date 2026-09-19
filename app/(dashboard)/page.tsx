@@ -2,9 +2,10 @@ import { CheckCircle2, XCircle } from "lucide-react"
 
 import { createClient } from "@/lib/supabase/server"
 import { PageHeader, PhasePlaceholder } from "@/components/page-header"
+import { pageTitle } from "@/lib/branding"
 
 export const metadata = {
-  title: "Visão geral · Negou Tracking",
+  title: pageTitle("Visão geral"),
 }
 
 /** Contagem por tabela, lida COM a sessão do usuário (ou seja, sob RLS). */

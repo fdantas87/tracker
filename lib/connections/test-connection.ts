@@ -32,7 +32,7 @@ const GA4_COLLECT_ENDPOINT = "https://www.google-analytics.com/mp/collect"
  * métricas padrão do GA4 (sessões, page views) e é fácil de reconhecer e
  * ignorar em qualquer relatório.
  */
-const GA4_TEST_EVENT_NAME = "negou_teste_conexao"
+const GA4_TEST_EVENT_NAME = "tracking_teste_conexao"
 
 /** Os IDs vão interpolados em URL: só aceita o formato exato, nunca texto livre (anti-SSRF). */
 const PIXEL_ID_PATTERN = /^[0-9]+$/
@@ -78,7 +78,7 @@ export async function testMetaPixelConnection(params: {
   }
 
   const configuredCode = params.testEventCode?.trim() || null
-  const testEventCode = configuredCode ?? "NEGOU_TESTE"
+  const testEventCode = configuredCode ?? "TESTE_CONEXAO"
 
   const payload = {
     data: [
@@ -86,11 +86,11 @@ export async function testMetaPixelConnection(params: {
         event_name: "PageView",
         event_time: Math.floor(Date.now() / 1000),
         action_source: "website",
-        event_source_url: "https://negou.net/",
+        event_source_url: "https://exemplo.com/",
         event_id: `teste-conexao-${randomUUID()}`,
         user_data: {
           client_ip_address: "200.147.0.1",
-          client_user_agent: "NegouTracking/1.0 (teste de conexao)",
+          client_user_agent: "TrackingPanel/1.0 (teste de conexao)",
         },
       },
     ],
@@ -207,7 +207,7 @@ export async function testMetaAdAccountConnection(params: {
  *
  * 1. Valida o formato no endpoint de debug (pega nome reservado, client_id
  *    faltando, etc.).
- * 2. ENVIA de verdade um evento `negou_teste_conexao` com `debug_mode`, pelo
+ * 2. ENVIA de verdade um evento `tracking_teste_conexao` com `debug_mode`, pelo
  *    endpoint normal do Measurement Protocol, pra ele aparecer no DebugView.
  *
  * Por que o passo 2 existe: verificado na prática, o endpoint de validação
@@ -239,7 +239,7 @@ export async function testGa4Connection(params: {
     events: [
       {
         name: GA4_TEST_EVENT_NAME,
-        params: { debug_mode: 1, origem: "painel_negou_tracking" },
+        params: { debug_mode: 1, origem: "painel_tracking" },
       },
     ],
   }

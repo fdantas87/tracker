@@ -90,9 +90,21 @@ if (!settings) {
   encerrar()
 }
 
+// A origem sai da URL do cron que o PRÓPRIO cliente configurou no painel.
+// Não há fallback para um domínio fixo de propósito: apontar para o tracker de
+// outro cliente daria um "TUDO CERTO" que não fala do deploy que está sendo
+// verificado — o pior resultado possível num script de verificação.
 const BASE = settings.dispatch_cron_url
   ? new URL(settings.dispatch_cron_url).origin
-  : "https://tracking.negou.net"
+  : (process.env.TRACKING_BASE_URL ?? "").trim() || null
+
+if (!BASE) {
+  erro(
+    "Nao da pra saber qual e a URL deste tracker.",
+    'Preencha "URL do cron" no painel (aba Disparo) ou rode com TRACKING_BASE_URL=https://tracking.seudominio.com'
+  )
+  encerrar()
+}
 
 let temCodigoNovo = false
 try {
@@ -147,7 +159,7 @@ if (settings.dispatch_cron_url) {
 } else {
   erro(
     "A URL do cron esta VAZIA, entao ninguem drena a fila.",
-    'No painel (aba Disparo), preencha "URL do cron" com https://tracking.negou.net/api/cron/dispatch e clique em Salvar. Faca isso DEPOIS do deploy.'
+    'No painel (aba Disparo), preencha "URL do cron" com https://<seu-dominio>/api/cron/dispatch e clique em Salvar. Faca isso DEPOIS do deploy.'
   )
 }
 
@@ -223,7 +235,7 @@ try {
   // Inserido direto no banco pra não depender do endpoint público.
   await rest("visitors", {
     method: "POST",
-    body: JSON.stringify({ trck_user_id: TUID, email: "verifica@negou.test" }),
+    body: JSON.stringify({ trck_user_id: TUID, email: "verifica@tracking.test" }),
   })
   await rest("events_log", {
     method: "POST",
@@ -232,7 +244,7 @@ try {
       event_name: "PageView",
       event_id: EVENT,
       event_time: new Date().toISOString(),
-      event_source_url: "https://tracking.negou.net/verificacao",
+      event_source_url: `${BASE}/verificacao`,
       dispatch_status: "pending",
       dispatch_after: new Date().toISOString(),
     }),

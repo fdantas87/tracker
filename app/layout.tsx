@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Manrope, JetBrains_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { TooltipProvider } from "@/components/ui/tooltip";
+import { APP_NAME } from "@/lib/branding";
 import "./globals.css";
 
 const manrope = Manrope({
@@ -15,8 +16,8 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Negou Tracking",
-  description: "Painel de tracking server-side (Meta CAPI + GA4) da Negou.",
+  title: APP_NAME,
+  description: "Painel de tracking server-side (Meta CAPI + GA4).",
   robots: { index: false, follow: false },
 };
 

@@ -1,7 +1,8 @@
 import { PageHeader, PhasePlaceholder } from "@/components/page-header"
+import { pageTitle } from "@/lib/branding"
 
 export const metadata = {
-  title: "Campanhas · Negou Tracking",
+  title: pageTitle("Campanhas"),
 }
 
 export default function CampanhasPage() {

@@ -1,35 +1,20 @@
-# Git Scope Rule — tracking.negou.net
+# Escopo deste repositório
 
-Este projeto vive dentro de um monorepo (`D:/Obsidian/Projetos/Negou`).
-A raiz do `.git` está em `D:/Obsidian/Projetos/Negou`, **não** nesta pasta.
+Este projeto é o tracker multi-cliente: **um repositório, N deploys**. O mesmo
+código roda para vários clientes, cada um com o seu projeto Vercel, o seu
+projeto Supabase e o seu domínio. O que distingue um deploy do outro são só as
+variáveis de ambiente — ver `.env.example` e `ONBOARDING.md`.
 
-## Regra obrigatória para operações git
+## Regra ao mexer no código
 
-Sempre que o usuário estiver com o workspace aberto em `apps/tracking.negou.net`
-e ordenar qualquer operação git (`add`, `commit`, `push`, `pull`, `status`, etc.),
-a IA DEVE escopar a operação **exclusivamente** a esta pasta:
+Nada específico de um cliente entra no código: nem domínio, nem marca, nem
+credencial. Domínio de captura vem de `TRACKING_ALLOWED_ORIGINS`; nome do painel
+vem de `NEXT_PUBLIC_APP_NAME` / `NEXT_PUBLIC_BRAND_NAME`; pixels, contas GA4,
+contas de anúncio e tokens ficam no banco de cada cliente.
 
-```bash
-# Sempre rodar a partir da raiz do repo
-cd D:/Obsidian/Projetos/Negou
-
-# add: somente arquivos do tracking
-git add apps/tracking.negou.net/
-
-# commit: mensagem focada no tracking
-git commit -m "..."
-
-# push/pull: normal (afeta só o que foi staged)
-git push
-git pull
-```
-
-**Nunca** usar `git add .` ou `git add -A` quando o workspace ativo for
-`apps/tracking.negou.net` — isso arrastaria arquivos de outros projetos do
-monorepo.
-
-Se o usuário abrir o workspace raiz (`D:/Obsidian/Projetos/Negou`),
-aí sim as operações git valem para o repositório completo.
+Se precisar de um valor novo que varia por cliente, ele vira variável de
+ambiente (e entra no `.env.example` e no `ONBOARDING.md`) ou coluna em
+`settings` — nunca uma constante no código.
 
 ---
 

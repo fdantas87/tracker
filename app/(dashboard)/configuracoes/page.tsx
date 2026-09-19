@@ -4,9 +4,10 @@ import { AccountsTab } from "@/components/settings/accounts-tab"
 import { DispatchTab } from "@/components/settings/dispatch-tab"
 import { GeneralTab } from "@/components/settings/general-tab"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { pageTitle } from "@/lib/branding"
 
 export const metadata = {
-  title: "Configurações · Negou Tracking",
+  title: pageTitle("Configurações"),
 }
 
 export default async function ConfiguracoesPage() {

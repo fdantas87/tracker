@@ -105,9 +105,9 @@ function geoDe([pais, uf, cidade, cep, lat, lng, fuso]) {
 }
 
 const ORIGENS = [
-  { utm_source: "facebook", utm_medium: "cpc", utm_campaign: "negou-frio-01", utm_content: "criativo-a" },
-  { utm_source: "facebook", utm_medium: "cpc", utm_campaign: "negou-frio-01", utm_content: "criativo-b" },
-  { utm_source: "instagram", utm_medium: "cpc", utm_campaign: "negou-remarketing", utm_content: "story-01" },
+  { utm_source: "facebook", utm_medium: "cpc", utm_campaign: "promo-frio-01", utm_content: "criativo-a" },
+  { utm_source: "facebook", utm_medium: "cpc", utm_campaign: "promo-frio-01", utm_content: "criativo-b" },
+  { utm_source: "instagram", utm_medium: "cpc", utm_campaign: "remarketing-01", utm_content: "story-01" },
   { utm_source: "google", utm_medium: "organic", utm_campaign: null, utm_content: null },
   { utm_source: null, utm_medium: null, utm_campaign: null, utm_content: null }, // direto
 ]
@@ -196,7 +196,7 @@ function eventoDeBorda(trck, geo) {
     ...geo,
     created_at: iso(tempo),
     event_time: iso(tempo),
-    event_source_url: "https://lp.negou.net/?teste=borda-de-fuso",
+    event_source_url: "https://lp.exemplo.com/?teste=borda-de-fuso",
     custom_data: null,
     action_source: "website",
     pixel_fired: false,
@@ -289,7 +289,7 @@ async function semear() {
         ...geo,
         created_at: iso(tempo),
         event_time: iso(tempo),
-        event_source_url: "https://lp.negou.net/",
+        event_source_url: "https://lp.exemplo.com/",
         custom_data: nome === "Purchase" ? { value: 197, currency: "BRL" } : null,
         action_source: "website",
         // No modo adaptive o pixel só dispara para quem já está identificado.
@@ -339,7 +339,7 @@ async function semear() {
         buyer_first_name: escolher(PRIMEIROS_NOMES),
         buyer_last_name: escolher(SOBRENOMES),
         buyer_phone: `+55119${inteiro(10_000_000, 99_999_999)}`,
-        product_name: escolher(["Método Negou", "Negou — Mentoria", "Negou Anual"]),
+        product_name: escolher(["Plano Essencial", "Mentoria", "Plano Anual"]),
         product_id: escolher(["PPLQQ7A7", "PPLQQ8B2"]),
         amount: escolher([97, 197, 297, 497, 997]),
         currency: "BRL",

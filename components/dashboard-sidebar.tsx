@@ -2,6 +2,8 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+
+import { BRAND_NAME } from "@/lib/branding"
 import {
   Activity,
   Globe,
@@ -57,7 +59,7 @@ export function DashboardSidebar({ userEmail }: { userEmail: string }) {
           className="flex flex-col gap-0.5 rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           <span className="font-mono text-[0.65rem] tracking-[0.2em] text-primary uppercase">
-            Negou
+            {BRAND_NAME}
           </span>
           <span className="text-sm font-semibold tracking-tight">Tracking</span>
         </Link>

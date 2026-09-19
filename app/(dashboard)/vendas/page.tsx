@@ -29,9 +29,10 @@ import {
   type VendaFilters,
 } from "@/lib/dashboard/vendas-filters"
 import type { PurchaseStatus } from "@/lib/webhooks/adapters/types"
+import { pageTitle } from "@/lib/branding"
 
 export const metadata = {
-  title: "Vendas · Negou Tracking",
+  title: pageTitle("Vendas"),
 }
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>

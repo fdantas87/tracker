@@ -2,7 +2,7 @@
 
 ## Projeto
 
-**Nome:** Negou Tracking
+**Nome:** Tracking Panel (multi-cliente — o nome de cada deploy vem de `NEXT_PUBLIC_APP_NAME`)
 **Objetivo:** Sistema de tracking server-side (Meta Conversions API + GA4 Measurement Protocol) com painel de dashboard — visitas → checkout → compra, sobrevivendo a bloqueio de cookies/ad-blocker.
 **Status:** Em desenvolvimento por fases (ver seção "Fases" abaixo)
 **Plano completo:** o plano original de arquitetura (contexto, modelo de dados, RLS, dedup, segurança) está registrado no histórico do projeto; este arquivo é a fonte viva que evolui a cada fase.
@@ -176,7 +176,7 @@ Isto foi verificado contra as APIs reais, não suposto. Vale ler antes de mexer:
 - **O `test_event_code` só isola de produção quando é um código REAL.** A primeira versão deste arquivo afirmava que qualquer `test_event_code` mantinha o evento fora dos dados de produção. Errado, e visto na prática: os testes feitos com códigos inventados (`TEST00000`, `NEGOU_TESTE`) apareceram na atividade de produção do pixel. O código precisa ser o que a aba "Eventos de teste" do Events Manager gera para aquele pixel. Sem código configurado, o teste de conexão agora avisa que o evento provavelmente contou como real.
 - **A aba "Eventos de teste" é um monitor AO VIVO.** Ela mostra o que chega enquanto está aberta — não tem histórico. Disparar e só depois abrir a tela não mostra nada, e parece (erradamente) que a integração falhou. Ao testar, abra a aba primeiro, depois dispare.
 - **Conta de anúncio:** leitura de `name,account_status,currency` funciona (o token de Ads tem `ads_read`), e é a mesma chamada que a fase 9 vai usar. `account_status != 1` devolve "parcial": o token funciona, quem está com problema é a conta.
-- **GA4:** duas coisas foram verificadas e as duas são limitação do Google, não do código: o endpoint de validação **não confere credenciais** (com `api_secret` inválido e com `measurement_id` inexistente, os dois devolvem HTTP 200 e zero mensagens) e o endpoint de coleta devolve **204 sempre**, dando certo ou errado. Não existe resposta de API que prove que a credencial está certa. Por isso o teste faz duas coisas: valida o formato no endpoint de debug e **envia de verdade** um evento `negou_teste_conexao` (nome próprio, pra não entrar nas métricas de página/sessão) com `debug_mode`, que aparece no DebugView em segundos se a credencial estiver certa. O status é `"verificar"`, com link direto pro DebugView.
+- **GA4:** duas coisas foram verificadas e as duas são limitação do Google, não do código: o endpoint de validação **não confere credenciais** (com `api_secret` inválido e com `measurement_id` inexistente, os dois devolvem HTTP 200 e zero mensagens) e o endpoint de coleta devolve **204 sempre**, dando certo ou errado. Não existe resposta de API que prove que a credencial está certa. Por isso o teste faz duas coisas: valida o formato no endpoint de debug e **envia de verdade** um evento `tracking_teste_conexao` (nome próprio, pra não entrar nas métricas de página/sessão) com `debug_mode`, que aparece no DebugView em segundos se a credencial estiver certa. O status é `"verificar"`, com link direto pro DebugView.
 - **`"verificar"` não é erro e a UI não pode sugerir que seja.** A primeira versão usava âmbar com ícone de alerta e o usuário leu como falha — reportou como "deu este erro" um resultado que era o esperado. Agora é ciano com ícone de informação. Honestidade que assusta sem necessidade é defeito de design, não virtude: o resultado precisa dizer com clareza que o envio deu certo e que falta só você conferir do outro lado.
 
 ---
@@ -515,6 +515,52 @@ produziria dado errado em silêncio.
 
 ---
 
+## Arquitetura multi-cliente (1 repo → N deploys)
+
+O mesmo repositório é implantado uma vez por cliente: cada um com seu projeto
+Vercel, seu projeto Supabase e seu domínio. **Nada específico de cliente no
+código** — o que distingue um deploy do outro são as variáveis de ambiente.
+Passo a passo do onboarding em [ONBOARDING.md](./ONBOARDING.md); modelo das
+variáveis em `.env.example`.
+
+- **`TRACKING_ALLOWED_ORIGINS` é a variável que faz ou quebra a captura.** A
+  allowlist de CORS era uma constante com os 6 domínios da Negou. Num deploy de
+  cliente o site dele nunca entrava nela, e o resultado não era um erro: o
+  `track.js` faz POST com `Content-Type: application/json`, o que obriga um
+  preflight; sem `Access-Control-Allow-Origin` o navegador cancela o POST, o
+  endpoint chega a responder 200, e o `post()` engole a falha com
+  `.catch(function () {})`. Zero eventos, zero aviso. Continua sendo comparação
+  por igualdade exata — **nunca** `endsWith`, pelo motivo já documentado no
+  arquivo. A própria URL de produção do projeto entra sozinha na lista.
+- **O nome do painel vem de `lib/branding.ts`**, não de string literal em nove
+  `page.tsx`. `APP_NAME` vai no `<title>`; `BRAND_NAME` é o wordmark da sidebar
+  e do login e cai para o `APP_NAME` quando não configurado. Os defaults são
+  genéricos (`Tracking`) de propósito: um deploy mal configurado mostra um nome
+  neutro, nunca a marca de outro cliente.
+- **BUG CORRIGIDO: o cookie de identidade nunca era gravado em domínio
+  `.com.br`.** `rootDomain()` pegava os dois últimos rótulos do hostname, o que
+  só funciona num domínio de dois níveis como `negou.net`. Em
+  `www.cliente.com.br` isso produzia `.com.br`, um sufixo público — e o
+  navegador **ignora** a atribuição em vez de lançar erro, então o `catch` nunca
+  rodava. A identidade caía só no localStorage e não atravessava subdomínio, em
+  silêncio, em praticamente todo cliente brasileiro. Agora o `track.js` grava uma
+  sonda do domínio mais amplo para o mais específico e fica no primeiro que o
+  navegador aceitou de verdade. Comportamento em `negou.net` é idêntico ao de
+  antes (verificado, 10/10 no teste de mesa).
+- **O `track.js` não tem mais domínio de fallback.** `API_BASE` sai do `src` da
+  própria tag; se não der para resolver, cai para `location.origin`. Um domínio
+  fixo mandaria os eventos de um cliente para o tracker de outro.
+
+### ⚠️ Ordem obrigatória: `TRACKING_ALLOWED_ORIGINS` ANTES do deploy
+
+Mesma lição das migrations. A allowlist é um `const` de topo de módulo, resolvido
+no cold start: preencher a variável depois **não** vale sem um novo deploy.
+Publicar o código novo sem a variável preenchida derruba a captura do deploy
+inteiro — inclusive o da própria Negou. Preencha na Vercel primeiro, depois
+publique.
+
+---
+
 ## Convenções
 
 ### Git & Commits
@@ -610,7 +656,7 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 - [Supabase Auth](https://supabase.com/docs/guides/auth) · [Supabase Vault](https://supabase.com/docs/guides/database/vault)
 - [Meta Conversions API](https://developers.facebook.com/docs/marketing-api/conversions-api) · [Customer Information Parameters](https://developers.facebook.com/docs/marketing-api/conversions-api/parameters/customer-information-parameters)
 - [GA4 gtag.js](https://developers.google.com/analytics/devguides/collection/ga4) · [GA4 Measurement Protocol](https://developers.google.com/analytics/devguides/collection/protocol/ga4)
-- [VERCEL_DEPLOY.md](../../VERCEL_DEPLOY.md) (regras de deploy do monorepo)
+- [ONBOARDING.md](./ONBOARDING.md) (passo a passo de um cliente novo)
 
 ---
 

@@ -25,7 +25,7 @@ export function LoginForm() {
           autoComplete="email"
           autoFocus
           required
-          placeholder="voce@negou.net"
+          placeholder="voce@exemplo.com"
           className="h-11"
         />
       </div>

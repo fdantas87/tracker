@@ -236,7 +236,7 @@ function DispatchForm({ settings }: { settings: SettingsRow }) {
           name="dispatch_cron_url"
           type="url"
           defaultValue={settings.dispatchCronUrl ?? ""}
-          placeholder="https://tracking.negou.net/api/cron/dispatch"
+          placeholder="https://tracking.seudominio.com/api/cron/dispatch"
           className="h-10 font-mono text-xs"
         />
         <p className="text-xs text-muted-foreground">

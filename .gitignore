@@ -32,6 +32,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...menos o modelo sem segredo: ele é o único registro de QUAIS chaves o
+# deploy precisa, e num repo que é a base de vários clientes isso é essencial.
+!.env.example
 
 # vercel
 .vercel

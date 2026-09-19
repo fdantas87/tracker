@@ -2,9 +2,10 @@ import type { Metadata } from "next"
 
 import { ThemeToggle } from "@/components/theme-toggle"
 import { LoginForm } from "./login-form"
+import { BRAND_NAME, pageTitle } from "@/lib/branding"
 
 export const metadata: Metadata = {
-  title: "Entrar · Negou Tracking",
+  title: pageTitle("Entrar"),
 }
 
 export default function LoginPage() {
@@ -18,7 +19,7 @@ export default function LoginPage() {
         <div className="w-full max-w-sm">
           <div className="mb-8 text-center">
             <p className="font-mono text-xs tracking-[0.2em] text-primary uppercase">
-              Negou
+              {BRAND_NAME}
             </p>
             <h1 className="mt-2 text-2xl font-semibold tracking-tight">
               Painel de tracking
