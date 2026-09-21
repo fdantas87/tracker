@@ -10,7 +10,7 @@ import { getReceitaPorLocal, getVisitantesPorLocal } from "@/lib/dashboard/geo"
 import {
   PERIODOS,
   PERIODO_PADRAO,
-  type GeoFilters,
+  type GeoFilters as GeoFiltros,
   type PeriodoKey,
 } from "@/lib/dashboard/geo-filters"
 import { pageTitle } from "@/lib/branding"
@@ -26,7 +26,7 @@ function texto(v: string | string[] | undefined): string | undefined {
   return s && s.trim() ? s.trim() : undefined
 }
 
-function lerFiltros(sp: Record<string, string | string[] | undefined>): GeoFilters {
+function lerFiltros(sp: Record<string, string | string[] | undefined>): GeoFiltros {
   const periodo = texto(sp.periodo)
 
   return {
@@ -35,7 +35,7 @@ function lerFiltros(sp: Record<string, string | string[] | undefined>): GeoFilte
   }
 }
 
-async function Conteudo({ filtros }: { filtros: GeoFilters }) {
+async function Conteudo({ filtros }: { filtros: GeoFiltros }) {
   const [visitantes, receita] = await Promise.all([
     getVisitantesPorLocal(filtros),
     getReceitaPorLocal(filtros),
