@@ -8,7 +8,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { LeadsFilters } from "@/components/dashboard/leads-filters"
 import { LeadsTable } from "@/components/dashboard/leads-table"
 import { PaginationLinks } from "@/components/dashboard/pagination-links"
-import { listLeads } from "@/lib/dashboard/leads"
+import { listLeads, getVisitorCounts } from "@/lib/dashboard/leads"
+import { VisitorChips } from "@/components/dashboard/visitor-chips"
 import {
   CONVERTEU_VALORES,
   IDENTIFICADO_VALORES,
@@ -22,7 +23,7 @@ import {
 } from "@/lib/dashboard/leads-filters"
 
 export const metadata = {
-  title: pageTitle("Leads"),
+  title: pageTitle("Visitantes"),
 }
 
 type SearchParams = Promise<Record<string, string | string[] | undefined>>
@@ -69,7 +70,7 @@ async function Conteudo({ filtros }: { filtros: LeadFilters }) {
     return (
       <Alert variant="destructive">
         <AlertCircle className="size-4" aria-hidden />
-        <AlertTitle>Não foi possível ler os leads</AlertTitle>
+        <AlertTitle>Não foi possível ler os visitantes</AlertTitle>
         <AlertDescription>{error}</AlertDescription>
       </Alert>
     )
@@ -82,13 +83,6 @@ async function Conteudo({ filtros }: { filtros: LeadFilters }) {
 
   return (
     <>
-      <LeadsFilters
-        periodo={filtros.periodo}
-        identificado={filtros.identificado}
-        converteu={filtros.converteu}
-        q={filtros.q}
-      />
-
       <LeadsTable rows={rows} filtrado={filtrado} />
 
       <PaginationLinks
@@ -99,6 +93,21 @@ async function Conteudo({ filtros }: { filtros: LeadFilters }) {
         basePath="/leads"
       />
     </>
+  )
+}
+
+async function ChipsSlot({ filtros }: { filtros: LeadFilters }) {
+  const contagens = await getVisitorCounts(filtros)
+  return <VisitorChips contagens={contagens} filtrosAtuais={filtros} params={paramsDe(filtros)} />
+}
+
+function ChipsCarregando() {
+  return (
+    <div className="flex w-full gap-1 sm:gap-2">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <Skeleton key={i} className="h-12 min-w-0 flex-1 rounded-lg sm:h-14 sm:rounded-xl xl:h-[52px]" />
+      ))}
+    </div>
   )
 }
 
@@ -113,16 +122,28 @@ function Carregando() {
 
 export default async function LeadsPage({ searchParams }: { searchParams: SearchParams }) {
   const filtros = lerFiltros(await searchParams)
+  const chaveTopo = `${filtros.periodo}|${filtros.q}`
 
   return (
     <>
       <PageHeader
-        title="Leads"
+        title="Visitantes"
         description="Todo visitante que já passou pelo track.js, identificado ou não — e a ficha completa de cada um."
       />
 
-      {/* A chave força o Suspense a reagir a cada mudança de filtro, em vez de
-          segurar a tela antiga até a nova query terminar. */}
+      <Suspense fallback={<Skeleton className="h-10 w-full rounded-xl -mt-2 mb-2 sm:-mt-4" />}>
+        <LeadsFilters
+          periodo={filtros.periodo}
+          identificado={filtros.identificado}
+          converteu={filtros.converteu}
+          q={filtros.q}
+        />
+      </Suspense>
+
+      <Suspense key={chaveTopo} fallback={<ChipsCarregando />}>
+        <ChipsSlot filtros={filtros} />
+      </Suspense>
+
       <Suspense key={JSON.stringify(filtros)} fallback={<Carregando />}>
         <Conteudo filtros={filtros} />
       </Suspense>

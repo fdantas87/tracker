@@ -102,132 +102,92 @@ export function VendasFilters({
   const ativos = [status, pagamento, q].filter(Boolean).length
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <div className="flex shrink-0 rounded-lg border p-0.5">
-        {(Object.keys(PERIODOS) as PeriodoKey[]).map((chave) => (
-          <button
-            key={chave}
-            type="button"
-            onClick={() => navegar({ periodo: chave })}
-            aria-pressed={periodo === chave}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-              periodo === chave
-                ? "bg-primary/15 text-primary"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {PERIODOS[chave].label}
-          </button>
-        ))}
-      </div>
+    <div className="glass -mt-2 mb-2 flex flex-col items-center rounded-xl p-1.5 sm:-mt-4 sm:flex-row">
+      <Select
+        value={status ?? TODOS}
+        onValueChange={(v) => navegar({ status: v === TODOS ? null : v })}
+      >
+        <SelectTrigger className="h-8 w-full sm:w-[160px] border-none bg-transparent shadow-none text-xs focus:ring-0">
+          <SelectValue placeholder="Status" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={TODOS} className="text-xs">Todos os status</SelectItem>
+          {(Object.keys(STATUS_LABELS) as PurchaseStatus[]).map((valor) => (
+            <SelectItem key={valor} value={valor} className="text-xs">
+              {STATUS_LABELS[valor]}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
 
-      {pendente ? (
-        <Loader2
-          className="size-4 animate-spin text-muted-foreground"
-          aria-label="Carregando"
+      <div className="hidden sm:block h-4 w-px shrink-0 bg-border/50 mx-1" />
+
+      <Select
+        value={pagamento ?? TODOS}
+        onValueChange={(v) => navegar({ pagamento: v === TODOS ? null : v })}
+      >
+        <SelectTrigger className="h-8 w-full sm:w-[160px] border-none bg-transparent shadow-none text-xs focus:ring-0">
+          <SelectValue placeholder="Forma de pgto" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value={TODOS} className="text-xs">Todas as formas</SelectItem>
+          {PAGAMENTO_VALORES.map((valor) => (
+            <SelectItem key={valor} value={valor} className="text-xs">
+              {rotuloPagamento(valor)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      <div className="hidden sm:block h-4 w-px shrink-0 bg-border/50 mx-1" />
+
+      <form
+        className="relative flex-1 w-full"
+        onSubmit={(e) => {
+          e.preventDefault()
+          const valor = new FormData(e.currentTarget).get("q")
+          navegar({ q: typeof valor === "string" ? valor.trim() : null })
+        }}
+      >
+        <Search
+          className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
+          aria-hidden
         />
-      ) : null}
+        <Input
+          id="filtro-q"
+          name="q"
+          defaultValue={q ?? ""}
+          placeholder="Buscar comprador, e-mail, produto ou transação..."
+          className="h-8 pl-8 border-none bg-transparent shadow-none text-xs focus-visible:ring-0"
+        />
+      </form>
 
-      <Popover>
-        <PopoverTrigger asChild>
-          <Button variant="outline" size="sm" className="ml-auto">
-            <Filter className="size-4" aria-hidden />
-            Filtros
-            {ativos ? (
-              <span className="ml-1 rounded-full bg-primary/15 px-1.5 font-mono text-[0.65rem] text-primary tabular-nums">
-                {ativos}
-              </span>
-            ) : null}
-          </Button>
-        </PopoverTrigger>
-
-        <PopoverContent align="end" className="w-80 gap-4 p-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="filtro-status">Status</Label>
-            <Select
-              value={status ?? TODOS}
-              onValueChange={(v) => navegar({ status: v === TODOS ? null : v })}
-            >
-              <SelectTrigger id="filtro-status" className="w-full">
-                <SelectValue placeholder="Todos" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={TODOS}>Todos os status</SelectItem>
-                {(Object.keys(STATUS_LABELS) as PurchaseStatus[]).map((valor) => (
-                  <SelectItem key={valor} value={valor}>
-                    {STATUS_LABELS[valor]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="filtro-pagamento">Forma de pagamento</Label>
-            <Select
-              value={pagamento ?? TODOS}
-              onValueChange={(v) => navegar({ pagamento: v === TODOS ? null : v })}
-            >
-              <SelectTrigger id="filtro-pagamento" className="w-full">
-                <SelectValue placeholder="Todas" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value={TODOS}>Todas as formas</SelectItem>
-                {PAGAMENTO_VALORES.map((valor) => (
-                  <SelectItem key={valor} value={valor}>
-                    {rotuloPagamento(valor)}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-
-          <form
-            className="space-y-1.5"
-            onSubmit={(e) => {
-              e.preventDefault()
-              const valor = new FormData(e.currentTarget).get("q")
-              navegar({ q: typeof valor === "string" ? valor.trim() : null })
-            }}
+      <div className="flex shrink-0 items-center gap-2 px-2">
+        {pendente ? (
+          <Loader2
+            className="size-3.5 animate-spin text-muted-foreground"
+            aria-label="Carregando"
+          />
+        ) : null}
+        {ativos || periodo !== PERIODO_PADRAO ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
+            onClick={() =>
+              navegar({
+                periodo: PERIODO_PADRAO,
+                status: null,
+                pagamento: null,
+                q: null,
+              })
+            }
           >
-            <Label htmlFor="filtro-q">Buscar</Label>
-            <div className="relative">
-              <Search
-                className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
-                aria-hidden
-              />
-              <Input
-                id="filtro-q"
-                name="q"
-                defaultValue={q ?? ""}
-                placeholder="Comprador, e-mail, produto ou transação"
-                className="pl-9 text-xs"
-              />
-            </div>
-          </form>
-
-          {ativos || periodo !== PERIODO_PADRAO ? (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="w-full"
-              onClick={() =>
-                navegar({
-                  periodo: PERIODO_PADRAO,
-                  status: null,
-                  pagamento: null,
-                  q: null,
-                })
-              }
-            >
-              <X className="size-4" aria-hidden />
-              Limpar filtros
-            </Button>
-          ) : null}
-        </PopoverContent>
-      </Popover>
+            Limpar
+          </Button>
+        ) : null}
+      </div>
     </div>
   )
 }

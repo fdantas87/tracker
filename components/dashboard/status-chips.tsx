@@ -40,7 +40,7 @@ export function StatusChips({
   ]
 
   return (
-    <div className="flex flex-wrap gap-2">
+    <div className="flex w-full gap-1 sm:gap-2">
       {chips.map(({ chave, label, valor, classe }) => {
         const selecionado = ativo === chave
 
@@ -51,7 +51,7 @@ export function StatusChips({
             scroll={false}
             aria-current={selecionado ? "true" : undefined}
             className={cn(
-              "glass flex items-baseline gap-2 rounded-xl border px-3 py-2 transition-colors",
+              "glass flex min-w-0 flex-1 flex-col items-center justify-center gap-1 rounded-lg border p-1.5 transition-colors sm:rounded-xl sm:p-2",
               selecionado
                 ? "border-primary/50 ring-1 ring-primary/30"
                 : "hover:border-foreground/20",
@@ -62,13 +62,15 @@ export function StatusChips({
           >
             <span
               className={cn(
-                "font-mono text-lg font-semibold tabular-nums",
+                "font-mono text-base font-semibold leading-none tabular-nums sm:text-lg md:text-xl lg:text-2xl",
                 chave ? classe.split(" ").find((c) => c.startsWith("text-")) : undefined
               )}
             >
               {valor.toLocaleString("pt-BR")}
             </span>
-            <span className="text-xs text-muted-foreground">{label}</span>
+            <span className="whitespace-nowrap text-center text-[7px] font-bold uppercase tracking-tighter text-muted-foreground sm:text-[8px] md:text-[10px] lg:text-xs">
+              {label}
+            </span>
           </Link>
         )
       })}

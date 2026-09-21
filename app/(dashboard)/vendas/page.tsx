@@ -96,7 +96,7 @@ function Cards({ resumo }: { resumo: VendasResumo }) {
   )
 
   return (
-    <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+    <section className="grid gap-4 sm:grid-cols-2">
       <StatCard
         label="Faturamento Total"
         valor={formatarMoeda(resumo.faturamento, moeda)}
@@ -127,14 +127,6 @@ function Cards({ resumo }: { resumo: VendasResumo }) {
         legenda={`Quantidade ${resumo.chargebacks.toLocaleString("pt-BR")}`}
         icone={ShieldAlert}
         tom={resumo.chargebacks > 0 ? "negativo" : "neutro"}
-      />
-
-      <StatCard
-        label="Vendas por Pagamento"
-        valor={principal ? principal.label : "—"}
-        legenda={formasUsadas}
-        icone={CreditCard}
-        tom="atencao"
       />
     </section>
   )
@@ -173,24 +165,27 @@ async function Conteudo({ filtros }: { filtros: VendaFilters }) {
         </Alert>
       ) : null}
 
-      <Cards resumo={resumo} />
+      <div className="grid gap-4 lg:grid-cols-[1fr_400px] xl:grid-cols-[1fr_480px]">
+        <div className="flex flex-col gap-4">
+          <Cards resumo={resumo} />
 
-      {resumo.moedasMultiplas ? (
-        <p className="text-xs text-muted-foreground">
-          Este período tem vendas em mais de uma moeda. Os totais acima somam apenas
-          as vendas em {resumo.moeda} — valores em outras moedas não são convertidos.
-        </p>
-      ) : null}
+          {resumo.moedasMultiplas ? (
+            <p className="text-xs text-muted-foreground">
+              Este período tem vendas em mais de uma moeda. Os totais acima somam apenas
+              as vendas em {resumo.moeda} — valores em outras moedas não são convertidos.
+            </p>
+          ) : null}
 
-      {resumo.truncado ? (
-        <p className="text-xs text-muted-foreground">
-          Os totais consideram as 20.000 vendas mais recentes do período.
-        </p>
-      ) : null}
+          {resumo.truncado ? (
+            <p className="text-xs text-muted-foreground">
+              Os totais consideram as 20.000 vendas mais recentes do período.
+            </p>
+          ) : null}
+        </div>
 
-      <div className="glass rounded-2xl p-4">
-        <h2 className="mb-3 text-sm font-medium">Vendas por Forma de Pagamento</h2>
-        <PaymentMethodChart dados={resumo.porPagamento} moeda={resumo.moeda} />
+        <div className="flex flex-col justify-start">
+          <PaymentMethodChart dados={resumo.porPagamento} moeda={resumo.moeda} />
+        </div>
       </div>
 
       <VendasTable rows={lista.rows} filtrado={filtrado} />

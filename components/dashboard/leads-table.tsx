@@ -83,9 +83,11 @@ export function LeadsTable({ rows, filtrado }: { rows: LeadRow[]; filtrado: bool
         <TableHeader>
           <TableRow className="hover:bg-transparent">
             <TableHead>Lead</TableHead>
-            <TableHead>Status</TableHead>
             <TableHead className="hidden lg:table-cell">Origem</TableHead>
             <TableHead className="hidden xl:table-cell">Local</TableHead>
+            <TableHead>Visitas</TableHead>
+            <TableHead>Páginas</TableHead>
+            <TableHead>Cadastros</TableHead>
             <TableHead>Compras</TableHead>
             <TableHead>Criado em</TableHead>
             <TableHead className="w-0" />
@@ -99,18 +101,24 @@ export function LeadsTable({ rows, filtrado }: { rows: LeadRow[]; filtrado: bool
                 <Identificador lead={lead} />
               </TableCell>
 
-              <TableCell>
-                <Badge variant={lead.identifiedAt ? "default" : "secondary"}>
-                  {lead.identifiedAt ? "Identificado" : "Anônimo"}
-                </Badge>
-              </TableCell>
-
               <TableCell className="hidden max-w-[12rem] text-sm lg:table-cell">
                 <Origem lead={lead} />
               </TableCell>
 
               <TableCell className="hidden text-sm xl:table-cell">
                 <Local lead={lead} />
+              </TableCell>
+
+              <TableCell className="font-mono tabular-nums text-sm">
+                {lead.totalVisitas.toLocaleString("pt-BR")}
+              </TableCell>
+
+              <TableCell className="font-mono tabular-nums text-sm">
+                {lead.totalPaginas.toLocaleString("pt-BR")}
+              </TableCell>
+
+              <TableCell className="font-mono tabular-nums text-sm">
+                {lead.totalCadastros.toLocaleString("pt-BR")}
               </TableCell>
 
               <TableCell>

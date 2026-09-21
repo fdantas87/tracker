@@ -2,36 +2,17 @@
 
 import { useTransition } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
-import { Loader2, Search, X } from "lucide-react"
+import { Loader2, Search } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import { cn } from "@/lib/utils"
-import { PERIODOS, PERIODO_PADRAO, type PeriodoKey } from "@/lib/dashboard/filters"
+import { PERIODO_PADRAO, type PeriodoKey } from "@/lib/dashboard/geo-filters"
 
-const TODOS = "__todos__"
-
-/**
- * Os filtros vivem na URL, não em estado de React: o link é compartilhável, o
- * botão voltar funciona e a página continua sendo renderizada no servidor —
- * sem nenhum useEffect de busca.
- */
-export function EventsFilters({
-  nomes,
+export function GeoFilters({
   periodo,
-  evento,
   q,
 }: {
-  nomes: string[]
   periodo: PeriodoKey
-  evento?: string
   q?: string
 }) {
   const router = useRouter()
@@ -47,39 +28,15 @@ export function EventsFilters({
       else params.set(chave, valor)
     }
 
-    // Qualquer mudança de filtro reinicia a paginação: continuar na página 7 de
-    // um recorte que agora tem 2 páginas mostraria uma tabela vazia.
-    params.delete("pagina")
-
     startTransition(() => {
       router.push(`${pathname}?${params.toString()}`, { scroll: false })
     })
   }
 
-  const temFiltro =
-    Boolean(evento || q || searchParams.get("status")) || periodo !== PERIODO_PADRAO
+  const temFiltro = Boolean(q) || periodo !== PERIODO_PADRAO
 
   return (
     <div className="glass -mt-2 mb-2 flex flex-col items-center rounded-xl p-1.5 sm:-mt-4 sm:flex-row">
-      <Select
-        value={evento ?? TODOS}
-        onValueChange={(v) => navegar({ evento: v === TODOS ? null : v })}
-      >
-        <SelectTrigger className="h-8 w-full sm:w-[220px] border-none bg-transparent shadow-none text-xs focus:ring-0">
-          <SelectValue placeholder="Todos os eventos" />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value={TODOS} className="text-xs">Todos os eventos</SelectItem>
-          {nomes.map((nome) => (
-            <SelectItem key={nome} value={nome} className="text-xs">
-              {nome}
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-
-      <div className="hidden sm:block h-4 w-px shrink-0 bg-border/50 mx-1" />
-
       <form
         className="relative flex-1 w-full"
         onSubmit={(e) => {
@@ -95,9 +52,9 @@ export function EventsFilters({
         <Input
           name="q"
           defaultValue={q ?? ""}
-          placeholder="Buscar por event_id ou trck_user_id"
+          placeholder="Buscar por país, estado ou cidade"
           className="h-8 pl-8 border-none bg-transparent shadow-none text-xs focus-visible:ring-0"
-          aria-label="Buscar por event_id ou trck_user_id"
+          aria-label="Buscar por país, estado ou cidade"
         />
       </form>
 
@@ -111,9 +68,7 @@ export function EventsFilters({
             variant="ghost"
             size="sm"
             className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
-            onClick={() =>
-              navegar({ periodo: PERIODO_PADRAO, evento: null, q: null, status: null })
-            }
+            onClick={() => navegar({ periodo: PERIODO_PADRAO, q: null })}
           >
             Limpar
           </Button>

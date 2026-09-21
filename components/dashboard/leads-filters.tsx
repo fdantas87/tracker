@@ -63,56 +63,41 @@ export function LeadsFilters({
     Boolean(q) || identificado !== "todos" || converteu !== "todos" || periodo !== PERIODO_PADRAO
 
   return (
-    <div className="glass flex flex-col gap-3 rounded-2xl p-3 sm:flex-row sm:items-center">
-      <div className="flex shrink-0 rounded-lg border p-0.5">
-        {(Object.keys(PERIODOS) as PeriodoKey[]).map((chave) => (
-          <button
-            key={chave}
-            type="button"
-            onClick={() => navegar({ periodo: chave })}
-            aria-pressed={periodo === chave}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
-              periodo === chave
-                ? "bg-primary/15 text-primary"
-                : "text-muted-foreground hover:text-foreground"
-            )}
-          >
-            {PERIODOS[chave].label}
-          </button>
-        ))}
-      </div>
-
+    <div className="glass -mt-2 mb-2 flex flex-col items-center rounded-xl p-1.5 sm:-mt-4 sm:flex-row">
       <Select
         value={identificado}
         onValueChange={(v) => navegar({ identificado: v === "todos" ? null : v })}
       >
-        <SelectTrigger className="w-full sm:w-40">
+        <SelectTrigger className="h-8 w-full sm:w-[140px] border-none bg-transparent shadow-none text-xs focus:ring-0">
           <SelectValue placeholder="Identificado" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="todos">Todos</SelectItem>
-          <SelectItem value="sim">Identificado</SelectItem>
-          <SelectItem value="nao">Anônimo</SelectItem>
+          <SelectItem value="todos" className="text-xs">Todos</SelectItem>
+          <SelectItem value="sim" className="text-xs">Identificado</SelectItem>
+          <SelectItem value="nao" className="text-xs">Anônimo</SelectItem>
         </SelectContent>
       </Select>
+
+      <div className="hidden sm:block h-4 w-px shrink-0 bg-border/50 mx-1" />
 
       <Select
         value={converteu}
         onValueChange={(v) => navegar({ converteu: v === "todos" ? null : v })}
       >
-        <SelectTrigger className="w-full sm:w-40">
+        <SelectTrigger className="h-8 w-full sm:w-[140px] border-none bg-transparent shadow-none text-xs focus:ring-0">
           <SelectValue placeholder="Converteu" />
         </SelectTrigger>
         <SelectContent>
-          <SelectItem value="todos">Comprou ou não</SelectItem>
-          <SelectItem value="sim">Converteu</SelectItem>
-          <SelectItem value="nao">Não converteu</SelectItem>
+          <SelectItem value="todos" className="text-xs">Comprou ou não</SelectItem>
+          <SelectItem value="sim" className="text-xs">Converteu</SelectItem>
+          <SelectItem value="nao" className="text-xs">Não converteu</SelectItem>
         </SelectContent>
       </Select>
 
+      <div className="hidden sm:block h-4 w-px shrink-0 bg-border/50 mx-1" />
+
       <form
-        className="relative flex-1"
+        className="relative flex-1 w-full"
         onSubmit={(e) => {
           e.preventDefault()
           const valor = new FormData(e.currentTarget).get("q")
@@ -120,32 +105,32 @@ export function LeadsFilters({
         }}
       >
         <Search
-          className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+          className="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
           aria-hidden
         />
         <Input
           name="q"
           defaultValue={q ?? ""}
           placeholder="Buscar por e-mail ou trck_user_id"
-          className="pl-9 font-mono text-xs"
+          className="h-8 pl-8 border-none bg-transparent shadow-none text-xs focus-visible:ring-0"
           aria-label="Buscar por e-mail ou trck_user_id"
         />
       </form>
 
-      <div className="flex shrink-0 items-center gap-2">
+      <div className="flex shrink-0 items-center gap-2 px-2">
         {pendente ? (
-          <Loader2 className="size-4 animate-spin text-muted-foreground" aria-label="Carregando" />
+          <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-label="Carregando" />
         ) : null}
         {temFiltro ? (
           <Button
             type="button"
             variant="ghost"
             size="sm"
+            className="h-6 px-2 text-xs text-muted-foreground hover:text-foreground"
             onClick={() =>
               navegar({ periodo: PERIODO_PADRAO, identificado: null, converteu: null, q: null })
             }
           >
-            <X className="size-4" aria-hidden />
             Limpar
           </Button>
         ) : null}

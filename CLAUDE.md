@@ -19,7 +19,7 @@
 - **next-themes** — dark como padrão, toggle para light (sem `enableSystem`)
 - **Supabase** (Postgres + Auth + Vault/pgsodium + pg_cron) — projeto criado, URL/anon/service_role em `.env.local` (nunca commitado); schema aplicado via migrations manuais (ver "Banco de dados" abaixo)
 - **@supabase/ssr** + **@supabase/supabase-js** — sessão em cookies no App Router (ver "Autenticação e shell")
-- **Recharts** e **react-simple-maps** — entram nas fases 8/9 (dashboard/geo), não instalados ainda
+- **Recharts** (fase 8a) e **react-simple-maps** + **d3-geo** + **world-atlas** (fase 8c) — instalados; o `world-atlas` é só o arquivo TopoJSON do mundo, embutido no bundle
 - **Sem Redis/Upstash** — o rate limit roda no próprio Postgres do Supabase (ver "Captura de eventos"), pra não acrescentar serviço nem credencial
 - **GitHub** para versionamento, **Vercel** para deploy (projeto próprio, root directory `apps/tracking.negou.net`, sem `vercel.json` — env vars só na dashboard da Vercel, seguindo `VERCEL_DEPLOY.md` da raiz do monorepo)
 
@@ -40,7 +40,7 @@ apps/tracking.negou.net/
 │   │   ├── vendas/actions.ts               # ✅ fase 8b — detalhe da venda só quando o painel abre
 │   │   ├── faturamento/page.tsx            # ✅ fase 8b — redirect("/vendas"), rota antiga
 │   │   ├── campanhas/page.tsx              # [fase 9]
-│   │   ├── geo/page.tsx                    # [fase 8]
+│   │   ├── geo/page.tsx                    # ✅ fase 8c — mapa-múndi, chips de local, receita por região
 │   │   └── configuracoes/page.tsx          # [fase 4] CRUD de credenciais (Server Actions)
 │   ├── layout.tsx                          # ✅ fase 1/3 — fontes, ThemeProvider, TooltipProvider
 │   ├── globals.css                         # ✅ fase 1 — tokens HSL, gradiente, glass, tabular-nums
@@ -75,6 +75,9 @@ apps/tracking.negou.net/
 │   ├── dashboard/vendas.ts                 # ✅ fase 8b — consultas da tela de Vendas (sob RLS)
 │   ├── dashboard/format.ts                 # ✅ fase 8a — data/hora no fuso do painel
 │   ├── dashboard/timezone.ts               # ✅ revisão geo — FUSO_PAINEL, diaLocal, inicioDoDiaLocal (SEM server-only)
+│   ├── dashboard/geo-filters.ts            # ✅ fase 8c — período + nomeDoPais (SEM server-only)
+│   ├── dashboard/geo-fit.ts                # ✅ fase 8c — enquadramento automático (SEM server-only, roda no cliente)
+│   ├── dashboard/geo.ts                    # ✅ fase 8c — pontos, rankings e receita por região (sob RLS)
 │   ├── geo.ts                              # ✅ fase 5 — IP real + os 8 headers x-vercel-ip-*
 │   ├── rate-limit.ts                       # ✅ fase 5 — Upstash quando configurado, memória senão
 │   ├── cors.ts                             # ✅ fase 5 — allowlist exata dos endpoints públicos
@@ -91,6 +94,8 @@ apps/tracking.negou.net/
 │   │                                       # ✅ fase 8b — stat-card, vendas-filters, vendas-table,
 │   │                                       #    payment-method-badge, payment-method-chart,
 │   │                                       #    sale-detail-sheet, purchase-status-badge
+│   │                                       # ✅ fase 8c — geo-view (dona da vista do mapa), world-map,
+│   │                                       #    world-map-impl, ranking-chips
 │   ├── dashboard-sidebar.tsx               # ✅ fase 3 — navegação (drawer no celular, sidebar no desktop)
 │   ├── user-menu.tsx                       # ✅ fase 3 — conta + sair
 │   ├── page-header.tsx                     # ✅ fase 3 — cabeçalho e placeholder de fase
@@ -100,6 +105,8 @@ apps/tracking.negou.net/
 ├── public/track.js                         # ✅ fase 5 — script embutível nos sites (identidade, gtag, pixel, decoração de links)
 ├── scripts/check-server-actions.mjs        # ✅ fase 4 — roda no build, ver "Credenciais e destinos"
 ├── scripts/seed-events.mjs                 # ✅ fase 8a — npm run seed / seed:limpar
+├── types/world-atlas.d.ts                  # ✅ fase 8c — TopoJSON como dado, sem inferência do literal
+├── types/anychart.d.ts                     # ✅ fase 8c — ponte do namespace global para módulo (destravou o build)
 └── supabase/
     ├── migrations/                          # ✅ fase 2 — SQL das 7 tabelas + RLS + Vault + pg_cron
     │                                        #    fase 5 — rate_limits; fase 7.5 — event_queue
@@ -311,6 +318,32 @@ um script de terminal.
   jsonb depois de 14 dias; sem uma mensagem explícita o modal vazio parece
   "o disparo não aconteceu". O mesmo vale pro GA4, que legitimamente não é
   acionado em evento de navegador.
+- **O topo da tela é um bloco de 2 colunas, não uma pilha.** À esquerda,
+  título/descrição em cima e os chips de status embaixo (`justify-between`, que
+  é o que faz a base das duas colunas coincidir); à direita, o gráfico ocupando
+  a altura das duas linhas. Por isso os chips saíram de `Conteudo` e ganharam
+  `ChipsSlot` com `Suspense` próprio. Abaixo de `lg` vira uma coluna só, na
+  ordem título → chips → gráfico: os chips são navegação, o gráfico é
+  indicador. Em "Tudo" não há gráfico, então o `grid-cols-2` **não** é aplicado
+  — senão metade da largura ficaria em branco.
+- **O gráfico virou um widget de linha no cabeçalho** (`events-chart-widget.tsx`),
+  não mais um card de largura total entre os filtros e a tabela. Três detalhes
+  que não são estéticos:
+  - **Ele busca a própria série e tem o próprio `Suspense`.** O `<PageHeader>`
+    renderiza FORA do Suspense principal, de propósito, pro título aparecer na
+    hora. Se o widget dependesse do `Promise.all` de `Conteudo`, o título ficaria
+    esperando a query do gráfico. Isso duplica uma chamada a `getSerieDiaria` —
+    troca aceitável, é query independente e capada em 20k linhas.
+  - **O toggle lê o `localStorage` por `useSyncExternalStore`, não por
+    `useEffect` + `setState`** — este último é exatamente o que o lint do React
+    19 acusa (`react-hooks/set-state-in-effect`), mesmo motivo de
+    `hooks/use-mobile.ts` ter sido reescrito. Padrão é **visível**: aba anônima
+    ou storage bloqueado não pode esconder o gráfico em silêncio.
+  - **Os números nos pontos só aparecem com ≤ 10 pontos** (Hoje e 7 dias). Em 30
+    dias, 30 rótulos viram borrão; o tooltip continua dando o valor exato.
+  - **Há um `<YAxis hide>` com `padding.bottom`.** Ele não desenha nada: existe
+    só para a linha do zero não encostar na base, porque os rótulos de `outros`
+    (quase sempre 0) caíam em cima dos ticks de data.
 - **A série do gráfico é agregada em JS, não em SQL.** Uma função de agregação
   exigiria migration nova (aplicada à mão no SQL Editor) e não valia travar a
   tela nisso. Só duas colunas são trazidas, com teto de 20k linhas. Se o volume
@@ -515,6 +548,105 @@ produziria dado errado em silêncio.
 
 ---
 
+## Tela de Geo (fase 8c — implementado)
+
+Mapa-múndi interativo que **já abre enquadrado onde os visitantes estão**, mais
+três chips de ranking (países/estados/cidades) e a mesma quebra para
+faturamento. **Nenhuma migration**: todas as colunas já existiam desde
+`20260918120000_geo_enriquecido.sql`, cujo comentário previa exatamente isto
+("o mapa da fase 8c, com precisão de ponto em vez de só pintar o estado").
+
+- **O enquadramento automático é por PERCENTIL PONDERADO, não por média e desvio
+  padrão.** Essa é a decisão que define a tela. Com média/desvio, um único
+  visitante em Portugal contra 31 no Brasil — exatamente o que o banco tem hoje
+  — alargaria a moldura até o meio do Atlântico e o mapa abriria mostrando
+  oceano. Cortando 5% de cada ponta por eixo, o outlier sai do cálculo e uma
+  concentração de verdade (30% num segundo país) continua dentro e alarga a
+  moldura. Medido nos dois casos: 97% dos visitantes enquadrados no primeiro,
+  os dois países visíveis no segundo. O ponto descartado continua **desenhado**
+  no mapa; ele só não manda no enquadramento inicial.
+- **O teto de zoom NÃO pode ser uma constante.** Foi assim na primeira versão
+  (`ZOOM_MAX = 10`) e estava errado, porque o zoom aqui é um multiplicador sobre
+  uma escala que já depende do tamanho da tela: o mesmo recorte do Brasil pedia
+  4,3 no desktop e 13,9 num celular de 360 px. O teto fixo travava o celular em
+  10 e o mapa abria mais afastado justamente onde sobra menos espaço. Agora
+  `zoomMaximoDe(largura, altura)` deriva o teto de um limite **geográfico**
+  (`ABERTURA_MINIMA_GRAUS = 8`). O mesmo número vai para o `maxZoom` do
+  `ZoomableGroup` — se o mapa aceitasse menos zoom do que o enquadramento pede,
+  o d3-zoom cortaria a diferença em silêncio.
+- **A escala da projeção também é nossa, não a do d3.** O react-simple-maps não
+  ajusta escala sozinho: sem `projectionConfig.scale`, ele usa a padrão do d3,
+  dimensionada para 960×500, e num card de outro formato o mapa nasce cortado
+  nas laterais — afastar o zoom até o fim nunca mostraria o mundo todo.
+  `escalaDoMapa()` resolve, e `geo-fit.ts` recria a projeção **exatamente** como
+  o componente a cria. Se as duas divergirem, o enquadramento calculado aponta
+  para um lugar diferente do desenhado.
+- **`lib/dashboard/geo-fit.ts` NÃO tem `server-only`**, e desta vez não é só pelo
+  motivo de sempre: o cálculo roda mesmo é no cliente, porque depende do tamanho
+  medido do card. O mapa é `dynamic(ssr: false)` — não existe enquadramento a
+  computar no servidor, onde não há tamanho.
+- **Quem guarda a vista do mapa é o `geo-view.tsx`, não o mapa.** Os chips são
+  irmãos do mapa, não filhos; com o estado no pai, clicar num chip é um
+  `setState` dentro de um handler de evento. As alternativas eram piores: um
+  `useEffect` de sincronização é o que o lint do React 19 recusa
+  (`react-hooks/set-state-in-effect`, a mesma pedra de `hooks/use-mobile.ts`), e
+  remontar o mapa por `key` faria o topojson ser reprocessado e a tela piscar a
+  cada clique.
+- **A medida do card vem de um ref callback com `ResizeObserver`**, não de
+  `useEffect`. `setState` dentro do callback do observer é evento, não efeito —
+  é isso que mantém o arquivo fora daquele lint.
+- **Os círculos são contra-escalados pelo zoom AO VIVO** (`useZoomPanContext`).
+  Sem isso o círculo é ampliado junto com o mapa e, com zoom 8, uma cidade vira
+  uma bolha do tamanho do estado. O raio é proporcional à **raiz** da contagem,
+  porque quem se compara é a área. Os maiores são desenhados por último: em SVG
+  quem vem depois fica por cima, e um ponto de 500 tapando um de 3 é melhor que
+  o contrário.
+- **A terra é `pointerEvents="none"`.** Sem isso ela rouba o hover dos círculos.
+  O arrasto continua funcionando porque quem escuta é o retângulo transparente
+  que o próprio `ZoomableGroup` põe por baixo.
+- **Faturamento por região vem do visitante casado, e isso foi CONFERIDO no
+  código antes de construir.** `app/api/webhook/compra/[platform]/route.ts:154`
+  copia `geo_country/region/city` de `visitors` para `purchases` — não resolve
+  geo do IP de quem chama o webhook, que seria o servidor da plataforma de
+  pagamento e não diria nada sobre o comprador. Se fosse o contrário, a tela
+  inteira estaria descrevendo o datacenter do PerfectPay (foi exatamente o bug
+  que o GA4 tinha antes do `ip_override`).
+- **Venda sem vínculo não some: ela é declarada.** Compra com
+  `match_found = false` nasce sem geo e não entra em ranking nenhum — então o
+  bloco diz, com todas as letras, quanto de receita ficou fora e por quê. Uma
+  soma que não fecha sem explicação é pior que um número faltando.
+- **Os chips de faturamento não são clicáveis, os de visitante são.**
+  `purchases` não tem latitude nem longitude; não há para onde apontar o mapa a
+  partir deles. Um botão que parece clicável e não faz nada seria pior do que o
+  texto.
+- **O padrão de período aqui é `7d`, igual ao de `lib/dashboard/filters.ts`** —
+  que é de onde o seletor da topbar lê o dele. Divergir (como a tela de Vendas
+  faz hoje, com `30d`) faz a topbar destacar "7 dias" enquanto a tela mostra
+  outro recorte: a pílula acesa passa a mentir.
+- **`/geo` precisou entrar em `SHOW_ON_ROUTES`** do
+  `components/dashboard/topbar-period-selector.tsx`. Sem isso o seletor de
+  período simplesmente não aparece na rota nova.
+- **O país é traduzido por `Intl.DisplayNames`, o estado não.** "BR" vira
+  "Brasil" sem tabela nenhuma para manter; a UF fica "SP" porque é como o
+  brasileiro lê o dado — e escrever "São Paulo" no chip de estado o deixaria
+  indistinguível do chip de cidade logo ao lado.
+- **O TopoJSON é declarado em `types/world-atlas.d.ts`, não importado como
+  literal.** Com `resolveJsonModule`, o TypeScript inferiria o arquivo inteiro
+  (105 KB de coordenadas) a cada checagem, sem ganho nenhum. Ele sai num chunk
+  próprio de 184 KB, carregado só quando alguém abre o mapa — conferido no
+  `.next/static/chunks`.
+- **Limitação registrada no código:** a longitude é tratada como eixo linear, então
+  uma distribuição que cruzasse o antimeridiano (±180°) seria enquadrada no lado
+  errado do planeta. Não acontece num negócio de um país só, e tratar direito
+  exigiria estatística circular — fica escrito em vez de virar surpresa.
+- **Fora do escopo, por decisão do usuário: demografia do GA4** (gênero, idade).
+  O GA4 só RECEBE eventos deste sistema; ele não devolve demografia. Teria de ser
+  uma integração de leitura nova — Google Analytics Data API, credencial de
+  serviço por cliente (a arquitetura é multi-cliente) e cache por causa de cota.
+  É uma fase própria, não um adendo desta.
+
+---
+
 ## Arquitetura multi-cliente (1 repo → N deploys)
 
 O mesmo repositório é implantado uma vez por cliente: cada um com seu projeto
@@ -639,7 +771,10 @@ mude o tipo da variável na Vercel se ela não precisar ser Secret.
 7.5. ✅ **Disparo atrasado com retroalimentação** — fila no Postgres, modo híbrido adaptativo no `track.js`, captura de formulário, enriquecimento do visitante pela compra e pg_cron drenando a fila (ver "Disparo atrasado")
 8a. ✅ **Dashboard — tela de Eventos** — tabela com `dispatch_status`/`dispatch_attempts`/`dispatch_error`, chips de contagem, gráfico diário e modal de payload (ver "Tela de Eventos")
 8b. ✅ **Dashboard — tela de Vendas** — faturamento, reembolsos, chargeback e quebra por forma de pagamento, com tabela paginada e painel lateral de detalhe da venda e do cliente (ver "Tela de Vendas"). Falta ainda a Visão geral (funil).
-8c. ⏳ Dashboard: Geo — mapa do Brasil com `react-simple-maps`
+8c. ✅ **Dashboard — tela de Geo** — mapa-múndi com zoom/pan que já abre
+enquadrado na concentração de visitantes, chips de país/estado/cidade que
+reenquadram o mapa, e faturamento aprovado por região (ver "Tela de Geo").
+Demografia do GA4 ficou de fora, como fase futura.
 9. ⏳ Campanhas (Meta Ads Insights + ROAS/CPA)
 10. ⏳ Auditoria de segurança e publicação
 
@@ -710,6 +845,50 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-09-19:** Fase 8c — tela de Geo. `lib/dashboard/{geo,geo-fit,geo-filters}.ts`,
+  `app/(dashboard)/geo/page.tsx` e 4 componentes novos (`geo-view`, `world-map`,
+  `world-map-impl`, `ranking-chips`), mais `types/world-atlas.d.ts`.
+  Dependências novas: `react-simple-maps` 5.0.5 (declara React 19 nos peers e traz
+  os próprios tipos — o risco de compatibilidade levantado no plano não existia),
+  `d3-geo` e `world-atlas`. **Nenhuma migration.**
+  - **A decisão que define a tela:** enquadramento por percentil ponderado em vez
+    de média/desvio. O banco de desenvolvimento tem 31 visitantes no Brasil e 2 em
+    Portugal — o caso exato em que média e desvio abririam o mapa no Atlântico.
+  - **Bug encontrado e corrigido durante a verificação:** o teto de zoom era uma
+    constante (10), mas o zoom é um multiplicador sobre uma escala que depende do
+    tamanho da tela. Medido: o mesmo recorte pedia 4,3 no desktop e 13,9 num
+    celular de 360 px, então o celular batia no teto e abria mais afastado do que
+    o calculado. Virou `zoomMaximoDe(largura, altura)`, derivado de um limite
+    geográfico, usado também no `maxZoom` do mapa (senão o d3-zoom cortaria a
+    diferença sem avisar). **Foi o teste de mesa que pegou** — no navegador isso
+    passaria por "achei que o mapa abria meio longe".
+  - **Conferido antes de construir, não suposto:** `purchases.geo_*` é copiado do
+    visitante casado (`route.ts:154`), e não resolvido do IP de quem chama o
+    webhook. Se fosse o IP, "faturamento por região" estaria descrevendo o
+    datacenter do PerfectPay — o mesmo tipo de erro silencioso que o GA4 tinha
+    antes do `ip_override`.
+  - Verificado: build e lint limpos nos arquivos novos, `check:actions` OK,
+    **19/19 no teste de mesa do enquadramento** (centro caindo no Brasil, 97% dos
+    visitantes dentro da moldura, Lisboa fora por desenho, concentração de 30%
+    alargando a moldura, cidade única sem estourar o zoom, formato de celular,
+    mundo inteiro cabendo com zoom 1, e os casos degenerados — sem pontos, sem
+    tamanho medido, contagem zero — todos sem `NaN`), e **29/29 no teste
+    autenticado real** (usuário temporário pela Admin API, login pela
+    `@supabase/ssr`, guarda de rota, a página abrindo, período pela URL, período
+    inválido caindo no padrão, e as 5 telas anteriores ainda de pé). Onze dessas
+    29 comparam os **números da tela** com uma agregação independente lida direto
+    do banco — país, estado, cidade, receita por estado e total aprovado. Usuário
+    temporário apagado no fim.
+  - **O que NÃO foi verificado por aqui:** o comportamento visual do mapa —
+    enquadramento na tela, arrastar, roda do mouse, tooltip no hover, clique no
+    chip reenquadrando, e as cores nos dois temas. Não há navegador nesta sessão;
+    a matemática está coberta por teste, o desenho precisa de olho humano.
+  - **Dois erros de tipo PRÉ-EXISTENTES travavam o `next build`**, no
+    `payment-method-chart-3d-impl.tsx` (trabalho em andamento, ainda não
+    commitado): o pacote `anychart` publica os tipos como namespace global e não
+    como módulo (TS2306), e o `this` do callback de tooltip era implícito.
+    Corrigidos com `types/anychart.d.ts` (`export = anychart`) e uma anotação de
+    `this` — o código compilava, quem parava era só o type check.
 - **2026-09-19:** Incidente — a captura da LP parou por completo. **Eram dois bugs
   empilhados, e o segundo só ficou visível depois de corrigir o primeiro.**
   - **(1) Deployment Protection da Vercel com `deploymentType: "all"`.** Todo o

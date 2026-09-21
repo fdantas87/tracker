@@ -7,8 +7,8 @@ import { UserMenu } from "@/components/user-menu"
 import {
   SidebarInset,
   SidebarProvider,
-  SidebarTrigger,
 } from "@/components/ui/sidebar"
+import { TopbarHeader } from "@/components/dashboard/topbar-header"
 
 export default async function DashboardLayout({
   children,
@@ -32,13 +32,7 @@ export default async function DashboardLayout({
     <SidebarProvider>
       <DashboardSidebar userEmail={email} />
       <SidebarInset>
-        <header className="sticky top-0 z-10 flex h-14 items-center gap-2 border-b bg-background/80 px-4 backdrop-blur-md">
-          <SidebarTrigger />
-          <div className="ml-auto flex items-center gap-2">
-            <ThemeToggle />
-            <UserMenu email={email} />
-          </div>
-        </header>
+        <TopbarHeader email={email} />
         <div className="flex flex-1 flex-col gap-6 p-4 sm:p-6">{children}</div>
       </SidebarInset>
     </SidebarProvider>

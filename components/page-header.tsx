@@ -1,26 +1,15 @@
 export function PageHeader({
-  title,
-  description,
   children,
 }: {
   title: string
   description?: string
   children?: React.ReactNode
 }) {
+  if (!children) return null
   return (
-    <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-      <div className="min-w-0">
-        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">
-          {title}
-        </h1>
-        {description ? (
-          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
-        ) : null}
-      </div>
-      {children ? (
-        <div className="flex shrink-0 items-center gap-2">{children}</div>
-      ) : null}
-    </header>
+    <div className="flex shrink-0 items-center justify-end gap-2">
+      {children}
+    </div>
   )
 }
 

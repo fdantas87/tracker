@@ -102,10 +102,13 @@ export type LeadRow = {
   createdAt: string
   totalCompras: number
   valorAprovado: number
+  totalVisitas: number
+  totalPaginas: number
+  totalCadastros: number
 }
 
 const COLUNAS_LISTA: string =
-  "trck_user_id,email,identified_at,utm_source,utm_campaign,geo_country,geo_region,geo_city,created_at,purchases(amount,status)"
+  "trck_user_id,email,identified_at,utm_source,utm_campaign,geo_country,geo_region,geo_city,created_at,purchases(amount,status),events_log(event_name,payload_meta,payload_ga4)"
 
 type RawListRow = {
   trck_user_id: string
@@ -118,10 +121,38 @@ type RawListRow = {
   geo_city: string | null
   created_at: string
   purchases: { amount: number; status: PurchaseStatus }[] | null
+  events_log: { event_name: string; payload_meta: any; payload_ga4: any }[] | null
 }
 
 function mapearLinha(row: RawListRow): LeadRow {
   const compras = row.purchases ?? []
+  const eventos = row.events_log ?? []
+
+  const sessionIds = new Set<string>()
+  const urls = new Set<string>()
+  let totalCadastros = 0
+
+  for (const e of eventos) {
+    if (e.event_name === "Lead" || e.event_name === "CompleteRegistration") {
+      totalCadastros++
+    }
+
+    if (e.payload_ga4 && typeof e.payload_ga4 === "object" && e.payload_ga4.session_id) {
+      sessionIds.add(String(e.payload_ga4.session_id))
+    }
+
+    if (e.payload_meta && typeof e.payload_meta === "object" && e.payload_meta.event_source_url) {
+      // Limpa a URL de query params para não contar a mesma página várias vezes
+      try {
+        const urlObj = new URL(String(e.payload_meta.event_source_url))
+        urls.add(urlObj.origin + urlObj.pathname)
+      } catch {
+        urls.add(String(e.payload_meta.event_source_url))
+      }
+    }
+  }
+
+  const totalVisitas = sessionIds.size > 0 ? sessionIds.size : (eventos.length > 0 ? 1 : 0)
 
   return {
     trckUserId: row.trck_user_id,
@@ -137,6 +168,9 @@ function mapearLinha(row: RawListRow): LeadRow {
     valorAprovado: compras
       .filter((c) => c.status === "approved")
       .reduce((soma, c) => soma + c.amount, 0),
+    totalVisitas,
+    totalPaginas: urls.size,
+    totalCadastros,
   }
 }
 
@@ -172,6 +206,67 @@ export async function listLeads(filtros: LeadFilters): Promise<{
     total: count ?? 0,
     error: null,
   }
+}
+
+export type VisitorCounts = {
+  visitantes: number
+  anonimos: number
+  identificados: number
+  clientes: number
+  leads: number
+}
+
+/**
+ * Conta os 5 agrupamentos principais da tela de visitantes.
+ * Ignora os filtros `identificado` e `converteu` para retornar a fotografia completa
+ * do período e termo de busca atuais. Limitado a 20.000 para segurança de performance.
+ */
+export async function getVisitorCounts(filtros: LeadFilters): Promise<VisitorCounts> {
+  const supabase = await createClient()
+
+  const filtrosGlobais: LeadFilters = { ...filtros, identificado: "todos", converteu: "todos" }
+  const conds = condicoesDe(filtrosGlobais)
+
+  let q = supabase.from("visitors").select("trck_user_id, identified_at")
+  for (const c of conds) {
+    if (c.op === "or") q = q.or(c.filtro)
+    else if (c.op === "is-null") q = q.is(c.coluna, null)
+    else if (c.op === "not-null") q = q.not(c.coluna, "is", null)
+    else if (c.op === "in") q = q.in(c.coluna, c.valores)
+    else if (c.op === "not-in") q = q.not(c.coluna, "in", `(${c.valores.join(",")})`)
+    else q = q[c.op](c.coluna, c.valor)
+  }
+
+  const [resVisitors, arrIdsCompra] = await Promise.all([
+    q.limit(20_000),
+    idsComCompra(supabase)
+  ])
+
+  const zeros = { visitantes: 0, anonimos: 0, identificados: 0, clientes: 0, leads: 0 }
+  if (resVisitors.error || !resVisitors.data) return zeros
+
+  const data = resVisitors.data as { trck_user_id: string; identified_at: string | null }[]
+  const setClientes = new Set(arrIdsCompra)
+
+  let visitantes = 0
+  let anonimos = 0
+  let identificados = 0
+  let clientes = 0
+  let leads = 0
+
+  for (const v of data) {
+    visitantes++
+    const isIdent = Boolean(v.identified_at)
+    const isCliente = setClientes.has(v.trck_user_id)
+
+    if (!isIdent) anonimos++
+    else identificados++
+
+    if (isCliente) clientes++
+    if (isIdent && !isCliente) leads++
+  }
+
+  return { visitantes, anonimos, identificados, clientes, leads }
 }
 
 export type LeadPurchaseRow = {
