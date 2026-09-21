@@ -27,10 +27,18 @@ export default async function DashboardLayout({
   }
 
   const email = user.email ?? "sem email"
+  // Definido no primeiro acesso (`completeSetup`). Fica em `app_metadata`, e
+  // não em `user_metadata`, porque o usuário reescreve o segundo sozinho com a
+  // anon key — um nome de marca reescrevível viraria "por que o painel mudou
+  // de nome?" sem rastro.
+  const orgName =
+    typeof user.app_metadata?.org_name === "string"
+      ? user.app_metadata.org_name
+      : undefined
 
   return (
     <SidebarProvider>
-      <DashboardSidebar userEmail={email} />
+      <DashboardSidebar userEmail={email} brandName={orgName} />
       <SidebarInset>
         <TopbarHeader email={email} />
         <div className="flex flex-1 flex-col gap-6 p-4 sm:p-6">{children}</div>

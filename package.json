@@ -4,10 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "npm run check:actions && next build",
+    "build": "npm run check:actions && npm run check:setup-sql && next build",
     "start": "next start",
     "lint": "eslint",
     "check:actions": "node scripts/check-server-actions.mjs",
+    "check:setup-sql": "node scripts/build-setup-sql.mjs --check",
+    "build:setup-sql": "node scripts/build-setup-sql.mjs",
     "verify:dispatch": "node scripts/verify-dispatch.mjs",
     "verify:captura": "node scripts/verify-captura.mjs",
     "seed": "node scripts/seed-events.mjs",

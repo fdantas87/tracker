@@ -1,131 +1,129 @@
-# Tutorial: Como Cadastrar e Publicar um Novo Cliente no Tracker
+# Guia do cliente: configurando o seu painel de tracking
 
-Este guia é o passo a passo definitivo para você criar o ambiente de um novo cliente usando a arquitetura **1 Único Repositório (`tracker`) ➔ N Projetos na Vercel**.
+Este guia cobre **só o seu lado**: o que fazer depois que o painel já está no ar.
+A instalação (Supabase, banco, deploy, domínio) é feita pelo operador e está em
+[ONBOARDING.md](./ONBOARDING.md) — **este arquivo não a duplica**, de propósito:
+duas fontes para o mesmo procedimento já divergiram uma vez, e a divergência foi
+justamente no passo que derrubou a captura em produção.
+
+Tempo: ~10 min.
 
 ---
 
-## Visão Geral do Processo
+## Passo 1: criar o seu acesso
+
+Abra o endereço do painel (ex.: `https://tracking.lojax.com.br`).
+
+Se ninguém entrou nele ainda, a tela mostra **"Configurar pela primeira vez"**:
+
+1. **Nome da organização** — aparece no cabeçalho do painel. Já vem sugerido;
+   pode corrigir.
+2. **Email** e **senha** (mínimo de 10 caracteres), duas vezes.
+3. **Criar conta e entrar.**
+
+Pronto: você já está dentro. Essa tela **some depois da primeira conta** e não
+volta — dali em diante o endereço só mostra o login normal.
+
+> Não apareceu essa tela e sim o login? Alguém já criou a conta. Peça a senha a
+> quem instalou.
+
+---
+
+## Passo 2: cadastrar os destinos
+
+**Configurações ➜ Contas.** É aqui que você diz para onde os eventos vão.
+
+- **Pixel do Meta:** o ID do pixel e o **token da Conversions API (CAPI)**.
+- **GA4:** o **Measurement ID** (`G-XXXXXXX`) e o **API Secret**.
+- **Conta de anúncio** (opcional): o ID e o token de Ads.
+
+Use o botão **Testar conexão** em cada uma.
+
+> **"Verificar" não é erro.** No GA4 o Google não devolve nenhuma resposta que
+> prove que a credencial está certa — nem com credencial errada ele reclama. Por
+> isso o teste **envia um evento de verdade** e te dá o link do DebugView para
+> conferir do outro lado. Resultado em azul com ícone de informação = deu certo,
+> falta só você olhar.
+
+---
+
+## Passo 3: ligar o disparo automático
+
+**Configurações ➜ Disparo.**
+
+- **URL do cron:** o endereço do seu painel + `/api/cron/dispatch`
+  (ex.: `https://tracking.lojax.com.br/api/cron/dispatch`).
+- **Token do cron:** clique em gerar. Ele aparece **uma única vez** — copie
+  antes de sair da tela.
+- **Modo:** deixe em `adaptive` e janela de 15 minutos, salvo orientação
+  diferente.
+
+Sem a URL preenchida os eventos ficam parados na fila e **nada chega ao Meta**,
+sem nenhum erro aparecer. É o passo mais fácil de esquecer e o mais caro.
+
+---
+
+## Passo 4: webhook da plataforma de pagamento
+
+**Configurações ➜ Geral** → gere o **token do webhook** (também mostrado uma vez
+só) e cadastre esta URL na sua plataforma:
 
 ```
-1. Criar Supabase do Cliente (Banco isolado)
-2. Ativar pg_net e rodar as Migrations SQL
-3. Criar o Usuário de Acesso do Cliente
-4. Criar o Projeto na Vercel conectado ao repo "tracker"
-5. Configurar as Variáveis de Ambiente na Vercel
-6. Adicionar Domínio Personalizado
-7. Configurar Pixels e Integrações no Painel Web
+https://tracking.lojax.com.br/api/webhook/compra/perfectpay?token=SEU_TOKEN
 ```
 
----
-
-## Passo 1: Criar o Supabase do Cliente
-
-1. Acesse [supabase.com](https://supabase.com) e crie um **New Project**.
-2. Defina:
-   - **Name:** Nome do cliente (ex: `tracker-clientex`)
-   - **Region:** `South America (São Paulo)`
-   - Guarde a senha mestra do banco em local seguro.
-3. Vá em **Project Settings ➜ API** e copie as 3 chaves:
-   - **Project URL** (ex: `https://xxxxxx.supabase.co`)
-   - **anon / public key**
-   - **service_role / secret key**
+É isso que faz a **compra** virar evento de conversão, com o valor da venda.
 
 ---
 
-## Passo 2: Extensões e Migrations no Supabase
+## Passo 5: instalar o script nos sites
 
-> ⚠️ **ATENÇÃO:** A extensão `pg_net` precisa ser ligada ANTES de rodar as tabelas!
+Em **todos** os sites que devem ser rastreados, no `<head>` ou antes de fechar o
+`</body>`:
 
-1. No menu lateral do Supabase, vá em **Database ➜ Extensions**.
-2. Procure por **`pg_net`** e clique para **habilitar/ativar**.
-3. Vá em **SQL Editor** no Supabase e execute os scripts da pasta `supabase/migrations/` na ordem numérica (ou use o consolidado):
-   - `20260916140000_extensions.sql`
-   - `20260916140100_tables.sql`
-   - `20260916140200_rls_policies.sql`
-   - `20260916140300_vault_functions.sql`
-   - `20260916140400_retention_job.sql`
-   - `20260917170000_rate_limits.sql`
-   - `20260917190000_event_queue.sql`
-   - `20260918120000_geo_enriquecido.sql`
-   - `20260919090000_purchases_dados_comprador.sql`
-   - `20260919120000_purchases_forma_pagamento.sql`
+```html
+<script src="https://tracking.lojax.com.br/track.js" defer></script>
+```
+
+> Cada site precisa estar autorizado no deploy (variável
+> `TRACKING_ALLOWED_ORIGINS`). Vai rastrear um domínio novo? Avise o operador
+> **antes** — sem isso o navegador bloqueia a captura daquele site em silêncio,
+> sem erro visível.
 
 ---
 
-## Passo 3: Criar o Usuário para o Cliente Entrar no Painel
+## Passo 6: conferir que está capturando
 
-O tracker não tem cadastro aberto público por segurança. O usuário é criado no Supabase:
+Abra um dos seus sites **em janela anônima** (isso importa: logado no painel da
+Vercel você atravessa proteções que um visitante comum não atravessa, e o teste
+mente).
 
-1. No Supabase, vá em **Authentication ➜ Users**.
-2. Clique em **Add user ➜ Create user**.
-3. Preencha o **Email** e a **Senha** de acesso do cliente.
-4. Marque a opção **Auto Confirm User** (para não exigir confirmação de e-mail).
-5. Salve.
+Depois, no painel:
 
----
-
-## Passo 4: Criar o Projeto na Vercel
-
-1. Acesse [vercel.com](https://vercel.com).
-2. Clique em **Add New... ➜ Project**.
-3. Localize e importe o repositório **`fdantas87/tracker`**.
-4. Defina o **Project Name** na Vercel (ex: `tracker-clientex`).
-5. **Framework Preset:** Next.js (já detecta sozinho).
-6. **Root Directory:** Deixe `.` (a raiz).
+- **Visitantes** — a sua visita deve aparecer.
+- **Eventos** — o `PageView` deve estar lá. Ele fica alguns minutos como
+  *pendente* antes de sair: é a janela de 15 minutos, é o comportamento certo.
 
 ---
 
-## Passo 5: Configurar as Variáveis de Ambiente na Vercel
+## Perdi minha senha
 
-Na mesma tela de criação do projeto (ou depois em *Settings ➜ Environment Variables*), adicione:
-
-| Variável | Descrição / Exemplo |
-|---|---|
-| `NEXT_PUBLIC_SUPABASE_URL` | URL do Supabase criado no Passo 1 |
-| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | Chave `anon` pública do Supabase |
-| `SUPABASE_SERVICE_ROLE_KEY` | Chave `service_role` secreta do Supabase |
-| `NEXT_PUBLIC_APP_NAME` | Nome exibido na aba do navegador (ex: `Tracking · Loja X`) |
-| `NEXT_PUBLIC_BRAND_NAME` | Nome da marca na barra lateral e login (ex: `Loja X`) |
-| `TRACKING_ALLOWED_ORIGINS` | URLs dos sites onde o pixel vai capturar (separadas por vírgula, sem barra no final). Ex: `https://lojax.com.br,https://lp.lojax.com.br` |
-
-Clique em **Deploy**.
+Não há recuperação por email. Quem tem acesso ao Supabase do seu projeto resolve
+em um minuto (**Authentication ➜ Users ➜ Reset password**) — fale com o
+operador. Nenhum dado de tracking se perde nesse processo.
 
 ---
 
-## Passo 6: Domínio do Cliente
+## Perguntas rápidas
 
-1. No projeto da Vercel, vá em **Settings ➜ Domains**.
-2. Adicione o subdomínio desejado (ex: `tracking.lojax.com.br`).
-3. No painel de DNS do domínio do cliente (Cloudflare, Registro.br, GoDaddy, etc.):
-   - Crie um apontamento tipo **CNAME**:
-     - Nome: `tracking`
-     - Destino: `cname.vercel-dns.com`
-4. Aguarde o SSL da Vercel ficar verde.
+**Preciso mexer em alguma coisa quando o sistema for atualizado?**
+Não. As melhorias chegam sozinhas ao seu painel.
 
----
+**Posso trocar o nome que aparece no painel?**
+O do cabeçalho, sim — foi o que você digitou no passo 1. O da aba do navegador
+vem de uma variável do deploy e precisa do operador.
 
-## Passo 7: Configurações Finais no Painel do Tracker
-
-Acesse o endereço do cliente (ex: `https://tracking.lojax.com.br/login`):
-
-1. **Faça login** com o email e senha criados no Passo 3.
-2. **Configurações ➜ Contas:**
-   - Adicione o **ID do Pixel do Meta** e o **Token da Conversions API (CAPI)**.
-   - Adicione o **Measurement ID do GA4** e o **API Secret** (se aplicável).
-   - Teste a conexão pelo próprio botão no painel.
-3. **Configurações ➜ Disparo:**
-   - Preencha a URL do Cron: `https://tracking.lojax.com.br/api/cron/dispatch`
-   - Gere e salve o Token do Cron.
-4. **Instalar o Script na Loja/Landing Page:**
-   Coloque a tag no `<head>` ou antes de fechar o `</body>` de todos os sites listados em `TRACKING_ALLOWED_ORIGINS`:
-   ```html
-   <script src="https://tracking.lojax.com.br/track.js" defer></script>
-   ```
-
----
-
-## 🚀 E as atualizações futuras?
-
-Sempre que você desenvolver novidades, novas telas ou correções no código do `tracker`:
-- Basta fazer o `git push` no repositório `tracker`.
-- **A Vercel atualizará todos os clientes automaticamente em minutos!**
+**Os números de Vendas e de Visitantes não batem. Está errado?**
+Não. **Vendas** mostra todas as compras; **Visitantes** só as que foram
+atribuídas a uma visita conhecida. Compra em que não deu para identificar a
+origem entra na primeira e não na segunda — é o esperado.

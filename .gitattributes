@@ -1,0 +1,11 @@
+# Fim de linha normalizado para os arquivos que são GERADOS ou LIDOS por script.
+#
+# Motivo concreto: `supabase/setup.sql` é gerado por scripts/build-setup-sql.mjs
+# a partir de supabase/migrations/*.sql, e o `npm run build` compara o arquivo
+# gerado com o commitado. Com `core.autocrlf=true` (padrão no Windows), as
+# migrations ficam em CRLF na árvore de trabalho e em LF no repositório — e aí a
+# comparação passa aqui e falha na Vercel, ou vice-versa, com a árvore
+# perfeitamente correta. O gerador normaliza EOL por conta própria; esta regra é
+# o que impede o `git status` de ficar permanentemente sujo depois de rodá-lo.
+*.sql text eol=lf
+*.mjs text eol=lf

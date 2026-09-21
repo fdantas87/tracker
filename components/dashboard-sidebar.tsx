@@ -37,7 +37,19 @@ const NAV_ITEMS = [
   { href: "/geo", label: "Geo", icon: Globe },
 ] as const
 
-export function DashboardSidebar({ userEmail }: { userEmail: string }) {
+export function DashboardSidebar({
+  userEmail,
+  brandName,
+}: {
+  userEmail: string
+  /**
+   * Nome da organização, definido no primeiro acesso e guardado no
+   * `app_metadata` do usuário. Vem daí, e não de `NEXT_PUBLIC_BRAND_NAME`,
+   * porque a variável é inlinada em tempo de build: corrigir o nome por ela
+   * exigiria um novo deploy. Sem valor, cai para a variável.
+   */
+  brandName?: string
+}) {
   const pathname = usePathname()
   const { setOpenMobile, isMobile } = useSidebar()
 
@@ -59,7 +71,7 @@ export function DashboardSidebar({ userEmail }: { userEmail: string }) {
           className="flex flex-col gap-0.5 rounded-lg outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
         >
           <span className="font-mono text-[0.65rem] tracking-[0.2em] text-primary uppercase">
-            {BRAND_NAME}
+            {brandName || BRAND_NAME}
           </span>
           <span className="text-sm font-semibold tracking-tight">Tracking</span>
         </Link>

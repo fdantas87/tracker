@@ -55,8 +55,9 @@ apps/tracking.negou.net/
 │   ├── supabase/server.ts                  # ✅ fase 3 — cliente SSR (anon + cookies), respeita RLS
 │   ├── supabase/service.ts                 # ✅ fase 3 — cliente service_role, `server-only`
 │   ├── supabase/proxy.ts                   # ✅ fase 3 — updateSession() usado pelo proxy.ts da raiz
-│   ├── auth/actions.ts                     # ✅ fase 3 — signIn/signOut (Server Actions)
+│   ├── auth/actions.ts                     # ✅ fase 3 — signIn/signOut (+ deploy 1-clique: completeSetup)
 │   ├── auth/require-user.ts                # ✅ fase 4 — guarda obrigatória de toda Server Action
+│   ├── auth/setup.ts                       # ✅ deploy 1-clique — estadoDoSetup(), falha fechado
 │   ├── crypto/vault.ts                     # ✅ fase 4 — única porta para os segredos cifrados
 │   ├── crypto/webhook-token.ts             # ✅ fase 4 — gera/hash/compara em tempo constante
 │   ├── settings/{config,queries}.ts        # ✅ fase 4 — os 3 tipos de conta parametrizados
@@ -104,7 +105,9 @@ apps/tracking.negou.net/
 ├── hooks/use-mobile.ts                     # ✅ fase 3 — reescrito com useSyncExternalStore (ver "Autenticação e shell")
 ├── public/track.js                         # ✅ fase 5 — script embutível nos sites (identidade, gtag, pixel, decoração de links)
 ├── scripts/check-server-actions.mjs        # ✅ fase 4 — roda no build, ver "Credenciais e destinos"
+├── scripts/build-setup-sql.mjs             # ✅ deploy 1-clique — gera setup.sql; --check roda no build
 ├── scripts/seed-events.mjs                 # ✅ fase 8a — npm run seed / seed:limpar
+├── .gitattributes                          # ✅ deploy 1-clique — *.sql em LF (ver "Deploy 1-clique")
 ├── types/world-atlas.d.ts                  # ✅ fase 8c — TopoJSON como dado, sem inferência do literal
 ├── types/anychart.d.ts                     # ✅ fase 8c — ponte do namespace global para módulo (destravou o build)
 └── supabase/
@@ -112,6 +115,8 @@ apps/tracking.negou.net/
     │                                        #    fase 5 — rate_limits; fase 7.5 — event_queue
     │                                        #    revisão geo — geo_enriquecido (8 colunas + fill_visitor_pii)
     │                                        #    fase 8b — purchases_dados_comprador, purchases_forma_pagamento
+    ├── setup-preflight.sql                  # ✅ deploy 1-clique — checa Vault e banco já instalado
+    ├── setup.sql                            # ✅ deploy 1-clique — GERADO, não editar (npm run build:setup-sql)
     ├── verify_phase2.sql                    # ✅ fase 2 — queries de verificação (roda manual, não é migration)
     └── verify_phase7_5.sql                  # ✅ fase 7.5 — 11 checagens da fila (roda manual)
 ```
@@ -734,6 +739,123 @@ mude o tipo da variável na Vercel se ela não precisar ser Secret.
 
 ---
 
+## Deploy 1-clique (implementado)
+
+Três gargalos que exigiam o desenvolvedor — colar 10 migrations, criar o projeto
+na Vercel, criar o usuário no Studio — viraram: rodar um arquivo, clicar num
+botão, preencher um formulário. **Nenhuma migration nova**, nenhum `vercel.json`,
+nenhuma variável de ambiente a mais.
+
+- **`supabase/setup.sql` é GERADO, nunca editado à mão.**
+  `scripts/build-setup-sql.mjs` concatena `supabase/setup-preflight.sql` +
+  `supabase/migrations/*.sql`, e `npm run build` roda o `--check`, que **regenera
+  em memória e compara byte a byte** — não confere hash contra um header, então
+  pega migration nova, migration editada *e* alguém editando o resultado. Sem
+  isso, acrescentar uma migration e esquecer de regerar daria a um cliente novo
+  um banco incompleto, em silêncio.
+- **Um arquivo, não dois, e a transação única é o motivo.** O SQL Editor executa
+  o script colado numa transação só, então ou o schema inteiro aplica ou nada
+  aplica. Isso não é obstáculo: é a proteção, porque as migrations **não são
+  idempotentes** (`create table`/`create policy`/`create trigger` sem guarda).
+  Dividir em "Parte A / Parte B" produziria o único estado do qual elas não se
+  recuperam — meio aplicado. **Não divida.** `create extension` é transacional
+  (não está na lista de comandos proibidos em bloco de transação) e o DDL é
+  visível aos statements seguintes, então `pg_cron` criado no arquivo 1 e usado
+  no 5 funciona. Nenhum `net.*` é *executado* no setup; a única referência está
+  dentro do corpo de `tick_event_queue()`.
+- **O preflight testa a VIEW do Vault, não o schema.** Das 4 funções de
+  `vault_functions.sql`, três são `plpgsql` e são criadas sem erro mesmo sem o
+  Vault — corpo de função PL/pgSQL só é analisado na execução, a mesma
+  propriedade que escondeu o `malformed array literal` da fase 7.5. Quem quebra é
+  `reveal_secret`, que é `language sql`. Por isso a checagem é
+  `to_regclass('vault.decrypted_secrets')`.
+- **`.gitattributes` com `*.sql text eol=lf` não é arrumação.** Com
+  `core.autocrlf=true` as migrations ficam CRLF na árvore e LF no repositório; um
+  gerador que lesse e escrevesse bytes crus faria o `--check` passar no Windows e
+  falhar na Vercel, com a árvore perfeitamente correta. O gerador normaliza EOL
+  por conta própria **e** o `.gitattributes` impede o arquivo gerado de sujar o
+  `git status` para sempre.
+- **O gerador é concatenação burra, de propósito.** O `setup.sql` carrega
+  backfills que são no-op em banco vazio (o truque de dois passos do
+  `event_queue`, o `drop function if exists` do geo, o `update ... where
+  platform='perfectpay'`). Parecem errados e estão certos — "simplificar" criaria
+  um segundo dialeto de SQL para manter em sincronia com o primeiro.
+- **O botão é query param, não `vercel.json`.** O wizard de variáveis do
+  "Deploy to Vercel" é controlado por `env`, `envDescription`, `envLink` e
+  `envDefaults` na URL de `vercel.com/new/clone`. O `vercel.json` **não** tem
+  parte nisso, e criá-lo reintroduziria o arquivo que o projeto decidiu não ter.
+  `env` é a lista de variáveis **obrigatórias** — não existe "opcional" ali, e é
+  por isso que `NEXT_PUBLIC_APP_NAME`/`BRAND_NAME` entram na lista com
+  `envDefaults`: elas são inlinadas em tempo de build, então deixá-las de fora
+  faria todo cliente abrir o painel escrito "Tracking" e precisar de um segundo
+  deploy.
+- **O botão NÃO configura o Deployment Protection, e isso piorou o risco.** Ele
+  herda o padrão do time; em *Standard Protection* a produção inteira nasce atrás
+  do SSO e a captura fica zerada sem um erro (o incidente de 2026-09-19). Antes o
+  projeto era criado à mão e você passava por Settings; agora o fluxo é clicar e
+  sair. Por isso virou passo destacado no ONBOARDING **e** aviso no README.
+- **`estadoDoSetup()` falha fechado, e as três armadilhas foram verificadas na
+  fonte do `@supabase/auth-js`:** (1) `data.total` só é populado dentro de
+  `if (links.length > 0)`, então com 0 ou 1 usuário ele é `0` mesmo havendo
+  usuário — use `data.users.length`; (2) em erro, `listUsers` devolve
+  `{ data: { users: [] }, error }` em vez de lançar, então um `length === 0`
+  ingênuo falharia **aberto** num endpoint que cria administrador; (3)
+  `createServiceClient()` fica dentro do `try`, porque `supabaseServiceRoleKey()`
+  lança quando a variável falta. Só `"vazio"` mostra o formulário.
+- **`export const dynamic = "force-dynamic"` no `/login` é obrigatório.** A
+  página era estática e pré-renderizada no build; virando assíncrona sem isso, a
+  resposta "zero usuários" ficaria congelada no output e o formulário de primeiro
+  acesso apareceria para sempre num painel já configurado.
+- **`completeSetup` re-checa `estadoDoSetup()` dentro da action.** Ela não pode
+  ter `requireUser()` (é o caminho de quem ainda não tem conta), e uma Server
+  Action é um endpoint HTTP público — quem descobrir o id chama direto, sem
+  passar pela página que esconde o formulário. Essa re-checagem é a única
+  barreira que existe.
+- **`app_metadata.org_name`, não `user_metadata`.** O usuário reescreve o segundo
+  sozinho com a anon key (`auth.updateUser({ data })`); só o `service_role`
+  escreve o primeiro, e `getUser()` devolve os dois igual. Um nome de marca
+  reescrevível em silêncio viraria "por que o painel do cliente mudou de nome?".
+  Não foi para `settings` porque a tabela é singleton e **nasce vazia** — a linha
+  só existe depois que alguém aciona `createInitialSettings()`, que gera e mostra
+  o `webhook_token` uma única vez; criá-la no setup queimaria o token sem
+  ninguém ver.
+- **`email_confirm: true` no `createUser` é o que evita o pior modo de falha.**
+  Em projeto hospedado a confirmação de email é exigida por padrão e depende de
+  SMTP, que um deploy novo não tem. Sem isso o `signInWithPassword` seguinte
+  devolve `email_not_confirmed` e o cliente fica trancado para fora do painel que
+  acabou de instalar, sem caminho de recuperação.
+- **Se o login automático falhar, a conta NÃO é desfeita.** Ela existe e está
+  confirmada; apagar seria pior. A action devolve "Conta criada, entre com o
+  email e a senha" — e como agora há usuário, `estadoDoSetup()` vira
+  `"com-usuario"` e a própria tela de login aparece. O caminho de falha se
+  resolve sozinho.
+- **Janela de reivindicação, conhecida e aceita.** Entre o deploy e o primeiro
+  acesso, quem alcançar a URL cria a conta de administrador. A mitigação é ordem
+  de passos, não código: o ONBOARDING manda fazer o primeiro acesso **ainda na
+  URL `*.vercel.app`, antes de apontar o domínio** — um domínio customizado
+  aparece em Certificate Transparency em minutos. Há também um TOCTOU de
+  milissegundos entre a re-checagem e o `createUser`; fechá-lo exigiria
+  `pg_advisory_xact_lock` ou uma tabela de lock, ou seja, uma migration — e a
+  entrega inteira se apoia em não ter nenhuma.
+- **Recuperação de senha sem SMTP é apagar o usuário.** A tela de primeiro acesso
+  reaparece sozinha, e **nenhum dado de tracking se perde** — visitantes,
+  eventos, vendas e os segredos do Vault não têm vínculo com o usuário do painel.
+  Está escrito no ONBOARDING; o caminho alternativo é Reset password no Studio.
+- **`TUTORIAL_CADASTRO_CLIENTE.md` deixou de duplicar o ONBOARDING** e virou só
+  o lado do cliente. Ele divergia em 4 pontos, e o pior era **omitir o
+  Deployment Protection** — um guia de onboarding que pula o passo que já
+  derrubou a captura não é uma versão comercial, é uma armadilha com capa bonita.
+
+### ⚠️ Antes de tornar o repositório público
+
+O botão exige repo público (a doc da Vercel é explícita: *"Deploy **public** Git
+projects"*). Antes de abrir: **o remote tem um PAT do GitHub em texto puro** no
+`.git/config` — revogue e reconfigure sem credencial. E decida conscientemente
+sobre `CLAUDE.md` (este arquivo tem nome de cliente, domínios de produção e
+histórico de incidentes) e `implementation_plan.md`.
+
+---
+
 ## Convenções
 
 ### Git & Commits
@@ -793,7 +915,8 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - ✅ ~~Gerar o primeiro dado real~~ — feito em 2026-09-18: uma visita à LP criou o visitante e o PageView, com `fbp`, IP, geo (`São Paulo/SP`) e `pixel_fired = false` (visitante anônimo, modo adaptativo), entrando na fila com a janela de 15 min. Foi essa visita que revelou o bug do `ga_client_id`.
 - ✅ ~~Rodar a migration `20260918120000_geo_enriquecido.sql` e publicar a revisão de geo/fuso~~ — feito em 2026-09-18, nesta ordem. Migration aplicada e conferida no SQL Editor (8 colunas com os tipos certos; `fill_visitor_pii` com **uma só** assinatura, de 7 parâmetros — sem sobrecarga), deploy por `vercel --prod` e conferência ao vivo passando. Falta ainda confirmar o `purchase` no GA4 na primeira venda real (pendência herdada da fase 7).
 - ✅ ~~Rodar as migrations `20260919090000_purchases_dados_comprador.sql` e `20260919120000_purchases_forma_pagamento.sql`~~ — feito pelo usuário em 2026-09-19 e conferido por REST: as 5 colunas novas de `purchases` respondem. **O deploy da fase 8b ainda não foi feito** — quando for, não há ordem a respeitar aqui, porque as migrations já estão no ar.
-- **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase.
+- **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase. *(Obsoleto para clientes novos: o botão do README faz isso. Ver "Deploy 1-clique".)*
+- **Deploy 1-clique — o que falta, e é só do usuário:** (1) **revogar o PAT do GitHub** que está em texto puro na URL do remote em `.git/config` e reconfigurar sem credencial; (2) rodar o `supabase/setup.sql` num projeto Supabase **novo**, do zero, e conferir com `verify_phase2.sql` — é o gate: não publicar um botão que aponta para um SQL não testado; (3) tornar o repo `fdantas87/tracker` público (o botão exige repo público) depois de decidir sobre `CLAUDE.md` e `implementation_plan.md`; (4) abrir a URL do botão uma vez e conferir que os 6 campos aparecem com os 2 defaults preenchidos.
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
 
 ---
@@ -803,9 +926,14 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 ```bash
 npm install       # instalar dependências
 npm run dev       # desenvolvimento (http://localhost:3000)
-npm run build     # build de produção (rodar antes de cada commit de fase)
+npm run build     # build de produção (roda check:actions e check:setup-sql antes)
 npm run start     # rodar a build de produção localmente
 npm run lint      # ESLint
+
+# Regera supabase/setup.sql a partir de supabase/migrations/. Acrescentou uma
+# migration? Rode isto e commite — o `npm run build` falha se os dois divergirem.
+npm run build:setup-sql
+npm run check:setup-sql   # só confere, é o que roda no build
 
 # Verifica a fila de disparo atrasado (fase 7.5): confere se a produção está com
 # o código novo, se o painel está configurado e — com um código de teste real —
@@ -845,6 +973,56 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-09-21:** Deploy 1-clique. Três gargalos que exigiam o desenvolvedor
+  viraram um arquivo, um botão e um formulário. Arquivos novos:
+  `scripts/build-setup-sql.mjs`, `supabase/setup-preflight.sql`,
+  `supabase/setup.sql` (gerado, 58 KB), `.gitattributes`, `lib/auth/setup.ts`,
+  `app/(auth)/login/setup-form.tsx`. **Nenhuma migration, nenhum `vercel.json`,
+  nenhuma dependência e nenhuma variável de ambiente nova.**
+  - **A premissa do plano original estava errada e foi corrigida antes de
+    construir:** o wizard de variáveis do "Deploy to Vercel" é controlado por
+    query params (`env`, `envDescription`, `envLink`, `envDefaults`), **não** por
+    uma seção `env` do `vercel.json`. Conferido na doc. Resultado: o
+    `vercel.json` saiu do escopo, o que também preserva a decisão registrada
+    aqui de o projeto não ter esse arquivo.
+  - **A decisão que define a Entrega 1:** um `setup.sql` só, e não dois. A
+    transação única do SQL Editor é a *proteção*, não o obstáculo — as migrations
+    não são idempotentes, então "tudo ou nada" é exatamente o que se quer.
+    Dividir em duas partes produziria o único estado do qual elas não se
+    recuperam.
+  - **Três armadilhas do `listUsers` verificadas na fonte do
+    `@supabase/auth-js`, não supostas** — e duas delas fariam o setup falhar
+    ABERTO: `data.total` é `0` mesmo havendo usuário quando não há header `Link`
+    (reabriria o formulário num painel configurado), e em erro a função devolve
+    `{ users: [] }` em vez de lançar (chave errada viraria "banco vazio"). Ver
+    "Deploy 1-clique".
+  - **Detalhe que teria passado batido:** o `settings` é singleton mas **nasce
+    vazio** — a linha só existe depois de `createInitialSettings()`, que gera e
+    mostra o `webhook_token` uma única vez. Por isso o nome da organização foi
+    para `app_metadata` do usuário, e não para uma coluna de `settings`: criar a
+    linha no setup queimaria o token sem ninguém ver.
+  - **Risco nomeado e mitigado por ordem de passos, não por código:** entre o
+    deploy e o primeiro acesso, quem alcançar a URL cria a conta de
+    administrador. O ONBOARDING manda fazer o primeiro acesso ainda na URL
+    `*.vercel.app`, antes de apontar o domínio — um domínio novo aparece em
+    Certificate Transparency em minutos.
+  - **Documentação:** `ONBOARDING.md` virou a fonte única, em duas partes
+    (operador / cliente), e o `TUTORIAL_CADASTRO_CLIENTE.md` deixou de duplicá-lo
+    — ele divergia em 4 pontos e **omitia o Deployment Protection**, o passo que
+    já derrubou a captura.
+  - Verificado por aqui: `setup.sql` gerado com **11/11 arquivos presentes
+    integralmente** (comparação byte a byte de cada fonte contra o trecho
+    correspondente do resultado), na ordem cronológica, sem CRLF e sem sujar o
+    `git status`; `--check` recusando migration nova, migration com nome fora do
+    padrão e edição à mão, e passando quando em dia; `check:actions` OK;
+    `tsc --noEmit` limpo; `npm run build` verde com `/login` saindo como rota
+    **dinâmica** (prova do `force-dynamic`); ESLint sem erro nos 6 arquivos
+    tocados.
+  - **O que NÃO foi verificado por aqui, e é o gate da publicação:** o
+    `setup.sql` nunca rodou contra um Postgres — não há banco nesta sessão. A
+    matemática do gerador está coberta; o SQL precisa de um projeto Supabase novo
+    antes de o botão ir ao ar. O mesmo vale para o fluxo de primeiro acesso ponta
+    a ponta e para a renderização do wizard da Vercel.
 - **2026-09-19:** Fase 8c — tela de Geo. `lib/dashboard/{geo,geo-fit,geo-filters}.ts`,
   `app/(dashboard)/geo/page.tsx` e 4 componentes novos (`geo-view`, `world-map`,
   `world-map-impl`, `ranking-chips`), mais `types/world-atlas.d.ts`.

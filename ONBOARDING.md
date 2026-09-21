@@ -4,9 +4,18 @@ Do zero até o tracker capturando. **A ordem importa** — vários passos falham
 silêncio se feitos fora de hora, e o sintoma é sempre o mesmo ("não chega
 evento"), que não aponta para a causa.
 
-Tempo: ~30 min, quase tudo em painel web.
+Tempo: ~20 min, tudo em painel web.
+
+Este arquivo é a fonte única do procedimento. Ele tem duas partes:
+
+- **Parte 1 — instalação** (passos 1 a 5): quem tem acesso ao Supabase e à
+  Vercel.
+- **Parte 2 — configuração do painel** (passos 6 a 8): pode ser o próprio
+  cliente, sem depender de ninguém.
 
 ---
+
+# Parte 1 — instalação
 
 ## 1. Supabase — criar o projeto
 
@@ -19,64 +28,50 @@ Tempo: ~30 min, quase tudo em painel web.
    - `anon` `public` → `NEXT_PUBLIC_SUPABASE_ANON_KEY`
    - `service_role` `secret` → `SUPABASE_SERVICE_ROLE_KEY`
 
-## 2. Supabase — habilitar `pg_net` ANTES das migrations
+## 2. Supabase — rodar o `setup.sql`
 
-**Database → Extensions**, procure `pg_net`, habilite.
+**SQL Editor → New query**, cole o conteúdo de
+[`supabase/setup.sql`](https://github.com/fdantas87/tracker/raw/main/supabase/setup.sql)
+e rode. Um arquivo, uma vez. Ele cria as 7 tabelas, as políticas de RLS, as
+funções do Vault, a fila de disparo e os 3 jobs do `pg_cron`.
 
-Sem ela a migration `20260917190000_event_queue.sql` falha. E, se você criar a
-extensão depois, `tick_event_queue()` existe mas não chama a Vercel: a fila de
-disparo atrasado nunca drena e **nenhum evento chega ao Meta** — sem erro
-nenhum aparecer.
+> **Baixe o arquivo cru** (o link acima é o `raw`) e cole a partir de um editor
+> de texto. Copiar da página renderizada do GitHub, num arquivo de ~58 KB, já
+> truncou conteúdo em casos conhecidos.
 
-`pg_cron` e o Vault costumam já vir habilitados; a migration de extensões
-cuida do resto.
+O script roda numa transação única: **ou o schema inteiro aplica, ou nada
+aplica**. Não existe meio-termo, e é por isso que ele é um arquivo só.
 
-## 3. Supabase — aplicar as migrations
+Duas mensagens de erro possíveis, as duas na primeira linha e as duas com o que
+fazer:
 
-**SQL Editor** → cole o conteúdo de cada arquivo de `supabase/migrations/` e
-rode, **na ordem do nome** (timestamp crescente):
+| Mensagem | O que fazer |
+|---|---|
+| `O Supabase Vault nao esta habilitado neste projeto` | **Database → Extensions**, habilite `supabase_vault`, rode de novo |
+| `Este banco JA tem o schema do tracker instalado` | Você já rodou. Para atualizar um banco existente, aplique só a migration nova de `supabase/migrations/` |
 
-```
-20260916140000_extensions.sql
-20260916140100_tables.sql
-20260916140200_rls_policies.sql
-20260916140300_vault_functions.sql
-20260916140400_retention_job.sql
-20260917170000_rate_limits.sql
-20260917190000_event_queue.sql          <- exige pg_net (passo 2)
-20260918120000_geo_enriquecido.sql
-20260919090000_purchases_dados_comprador.sql
-20260919120000_purchases_forma_pagamento.sql
-```
+Não é mais preciso habilitar `pg_net` à mão — o próprio script cria a extensão.
 
-São aplicadas à mão de propósito: manter o banco atualizado não exige
-compartilhar nenhum token novo.
-
-Depois, rode `supabase/verify_phase2.sql` e confira que RLS, Vault e cron estão
-como esperado.
+Depois, opcionalmente, rode `supabase/verify_phase2.sql` e
+`supabase/verify_phase7_5.sql` para conferir RLS, Vault, cron e a fila.
 
 > **Banco vazio = captura morta.** `/api/identify` e `/api/event` respondem 500
 > na primeira visita se as tabelas não existirem. Este passo vem antes do
 > deploy, sempre.
+>
+> **Se o arquivo único falhar** por qualquer motivo que não os dois acima, o
+> caminho antigo continua valendo: aplique os arquivos de
+> `supabase/migrations/` um a um, na ordem do nome.
 
-## 4. Supabase — criar o usuário do painel
+## 3. Vercel — deploy
 
-**Authentication → Users → Add user**, com email e senha, **Auto Confirm User**
-marcado.
+Clique no botão do [README](./README.md#deploy-de-um-cliente-novo-em-3-passos).
+A Vercel clona o repositório na conta do cliente, pede as variáveis e faz o
+deploy.
 
-Não existe rota de cadastro no painel, de propósito. Sem este passo ninguém
-consegue entrar.
+<a id="variaveis-de-ambiente"></a>
 
-## 5. Vercel — criar o projeto
-
-1. **Add New → Project**, importe o repositório do tracker.
-2. Framework: Next.js (detectado sozinho).
-3. Root Directory: a raiz do repositório.
-4. **Não faça o deploy ainda** — configure as variáveis primeiro (passo 6).
-
-## 6. Vercel — variáveis de ambiente
-
-**Settings → Environment Variables**, em Production e Preview:
+### Variáveis de ambiente
 
 | Variável | Valor |
 |---|---|
@@ -96,12 +91,31 @@ https://cliente-a.com.br,https://www.cliente-a.com.br,https://lp.cliente-a.com.b
 > **Se ficar vazia, o navegador bloqueia a captura inteira.** A comparação é por
 > igualdade exata — subdomínio **não** herda, liste um por um. O domínio de
 > produção do próprio projeto Vercel entra sozinho na lista.
+>
+> Mudar o valor depois **só vale com um novo deploy**: a allowlist é um `const`
+> de topo de módulo, resolvido no cold start.
 
-## 7. Vercel — domínio e deploy
+As duas últimas variáveis já vêm preenchidas com `Tracking` no formulário —
+troque pelo nome do cliente. O nome do cabeçalho do painel ainda pode ser
+corrigido no passo 5, sem redeploy; o do `<title>` não.
 
-1. **Settings → Domains** → adicione `tracking.cliente-a.com.br`.
-2. Aponte o CNAME no DNS do cliente.
-3. **Settings → Deployment Protection → Vercel Authentication** → deixe em
+## 4. Primeiro acesso — AGORA, antes do domínio
+
+Abra a URL `*.vercel.app` que a Vercel acabou de gerar. A tela de login mostra
+**"Configurar pela primeira vez"**: preencha nome da organização, email e senha
+(mínimo 10 caracteres). Você entra direto no painel.
+
+> **Faça isso imediatamente, ainda na URL `*.vercel.app`.** Enquanto não existe
+> nenhuma conta, quem alcançar a URL cria a de administrador. A URL da Vercel é
+> desconhecida e não aparece em Certificate Transparency — mas um **domínio
+> customizado aparece em minutos** depois de você apontar o DNS. Feito o
+> primeiro acesso, essa tela some para sempre.
+
+<a id="protecao"></a>
+
+## 5. Vercel — proteção e domínio
+
+1. **Settings → Deployment Protection → Vercel Authentication** → deixe em
    **"Only Preview Deployments"**.
 
    ⚠️ **Passo que já derrubou a captura inteira em produção.** No padrão
@@ -111,14 +125,22 @@ https://cliente-a.com.br,https://www.cliente-a.com.br,https://lp.cliente-a.com.b
    testando logado**: seu navegador tem sessão na Vercel, atravessa a proteção e
    mostra o painel funcionando. Confira com `vercel project protection` — o
    esperado é `"deploymentType": "preview"`.
-4. Faça o deploy.
-5. Confira: `https://tracking.cliente-a.com.br/api/config/public` responde JSON,
+
+   O botão de deploy herda o padrão do time, então **este passo nunca é
+   automático**.
+2. **Settings → Domains** → adicione `tracking.cliente-a.com.br` e aponte o CNAME
+   no DNS do cliente.
+3. Confira: `https://tracking.cliente-a.com.br/api/config/public` responde JSON,
    e `/api/cron/dispatch` responde **401** sem token (se responder 200, pare e
    investigue).
 
-## 8. Painel — destinos e disparo
+---
 
-Entre com o usuário do passo 4.
+# Parte 2 — configuração do painel
+
+Daqui para baixo é tudo dentro do painel, com a conta criada no passo 4.
+
+## 6. Destinos e disparo
 
 **Configurações → Contas:** cadastre os pixels do Meta, as propriedades GA4 e as
 contas de anúncio do cliente. Use "Testar conexão" em cada uma.
@@ -138,7 +160,7 @@ cadastre na plataforma de pagamento:
 https://tracking.cliente-a.com.br/api/webhook/compra/perfectpay?token=SEU_TOKEN
 ```
 
-## 9. Instalar o track.js nos sites
+## 7. Instalar o track.js nos sites
 
 ```html
 <script src="https://tracking.cliente-a.com.br/track.js" defer></script>
@@ -147,7 +169,7 @@ https://tracking.cliente-a.com.br/api/webhook/compra/perfectpay?token=SEU_TOKEN
 Em todo site listado em `TRACKING_ALLOWED_ORIGINS`. O domínio do `src` é o que
 define para onde os eventos vão.
 
-## 10. Verificar de ponta a ponta
+## 8. Verificar de ponta a ponta
 
 ```bash
 npm run verify:captura -- --origem https://lp.cliente-a.com.br
@@ -165,27 +187,46 @@ CORS), e veja o visitante aparecer em **Leads** e o PageView em **Eventos**.
 
 ---
 
+## Perdi a senha do painel
+
+Não há envio de email (um projeto Supabase novo não tem SMTP configurado), mas
+há dois caminhos, os dois no painel do Supabase do cliente:
+
+- **Authentication → Users → o usuário → Reset password.** Define uma senha nova
+  direto, sem email.
+- **Ou apague o usuário.** Na próxima visita a `/login`, a tela "Configurar pela
+  primeira vez" reaparece sozinha, porque `auth.users` voltou a estar vazia.
+
+Nos dois casos **nenhum dado de tracking é perdido** — visitantes, eventos,
+vendas e os segredos do Vault não têm vínculo nenhum com o usuário do painel. No
+segundo, só o nome da organização precisa ser digitado de novo.
+
+Para criar um **segundo** acesso, use **Authentication → Users → Add user** com
+**Auto Confirm User** marcado. Ele não terá o nome da organização no
+`app_metadata`, então verá o valor de `NEXT_PUBLIC_BRAND_NAME` no cabeçalho —
+copie o `app_metadata` do primeiro usuário se quiser que os dois vejam igual.
+
 ## Quando algo não chega
 
 | Sintoma | Causa provável |
 |---|---|
-| Zero eventos, e `/track.js` responde 302 para `vercel.com/sso-api` | Deployment Protection ligado em Produção (passo 7.3) |
+| Zero eventos, e `/track.js` responde 302 para `vercel.com/sso-api` | Deployment Protection ligado em Produção (passo 5.1) |
 | Zero eventos, `/api/identify` falha com erro de CORS | O site não está em `TRACKING_ALLOWED_ORIGINS`, ou a variável mudou sem redeploy |
-| Zero eventos, `/api/identify` responde 500 | Migrations não aplicadas |
-| Eventos aparecem, mas ficam `pending` para sempre | URL/token do cron não configurados, ou `pg_net` desabilitado |
+| Zero eventos, `/api/identify` responde 500 | `setup.sql` não aplicado |
+| Eventos aparecem, mas ficam `pending` para sempre | URL/token do cron não configurados |
 | Eventos saem, mas o Meta não casa ninguém | Pixel não cadastrado, ou token de CAPI sem permissão |
 | Compra registrada sem atribuição | Normal quando o link de checkout não foi decorado; ver `match_method` |
+| A tela de login mostra "Não foi possível verificar a instalação" | `SUPABASE_SERVICE_ROLE_KEY` ausente ou errada nas variáveis da Vercel |
+| A tela de "Configurar pela primeira vez" aparece num painel já usado | Alguém apagou o usuário no Supabase. Recrie a conta — nenhum dado de tracking se perdeu |
 
 ## Checklist
 
 - [ ] Projeto Supabase criado, 3 chaves copiadas
-- [ ] `pg_net` habilitado **antes** das migrations
-- [ ] 10 migrations aplicadas na ordem + `verify_phase2.sql` limpo
-- [ ] Usuário do painel criado e confirmado
-- [ ] Projeto Vercel criado
-- [ ] 6 variáveis preenchidas, `TRACKING_ALLOWED_ORIGINS` inclusive
+- [ ] `supabase/setup.sql` rodado, sem erro
+- [ ] Deploy feito pelo botão, 6 variáveis preenchidas
+- [ ] **Conta de administrador criada, ainda na URL `*.vercel.app`**
 - [ ] Deployment Protection em "Only Preview Deployments"
-- [ ] Domínio apontado, deploy feito, `/api/cron/dispatch` devolvendo 401
+- [ ] Domínio apontado, `/api/cron/dispatch` devolvendo 401
 - [ ] `npm run verify:captura` passando
 - [ ] Pixels/GA4 cadastrados e testados no painel
 - [ ] URL e token do cron preenchidos **depois** do deploy
