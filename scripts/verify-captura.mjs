@@ -76,12 +76,34 @@ function origensDosArgumentos() {
     .filter(Boolean)
 }
 
-const ORIGENS = [
+// Começa com env + args, mas depois soma o que estiver no banco (allowed_origins).
+let ORIGENS = [
   ...origensDosArgumentos(),
   ...(env.TRACKING_ALLOWED_ORIGINS ?? "").split(","),
 ]
   .map((v) => v.trim().replace(/\/+$/, ""))
   .filter((v) => /^https?:\/\//.test(v))
+
+// Tenta buscar allowed_origins do banco (mesma técnica que dispatch_cron_url).
+async function descobrirOrigensDopainel() {
+  const sb = env.NEXT_PUBLIC_SUPABASE_URL
+  const key = env.SUPABASE_SERVICE_ROLE_KEY
+  if (!sb || !key) return []
+
+  try {
+    const res = await fetch(
+      `${sb}/rest/v1/settings?select=allowed_origins&id=eq.true`,
+      { headers: { apikey: key, Authorization: `Bearer ${key}` } }
+    )
+    const origins = (await res.json())?.[0]?.allowed_origins ?? []
+    return Array.isArray(origins) ? origins : []
+  } catch {
+    return []
+  }
+}
+
+const painelOrigins = await descobrirOrigensDopainel()
+ORIGENS = [...new Set([...ORIGENS, ...painelOrigins])]
 
 /**
  * A URL do tracker sai da mesma fonte que `verify:dispatch` usa: a "URL do cron"
@@ -203,10 +225,12 @@ if (ORIGENS.length === 0) {
       } else {
         erro(
           `${origem} NAO recebeu Access-Control-Allow-Origin (status ${res.status}).`,
-          "Acrescente essa origem a TRACKING_ALLOWED_ORIGINS na Vercel e REFACA O DEPLOY: " +
-            "a allowlist e um const de topo de modulo, resolvido no cold start, entao mudar " +
-            "a variavel sem publicar de novo nao vale. A comparacao e por igualdade exata — " +
-            "confira esquema (https://) e ausencia de barra final."
+          "ESCOLHA UM: (1) Abra Configurações → Geral, aba Domínios liberados, " +
+            "e adicione a origem — vale em até 60s, sem deploy novo. " +
+            "OU (2) Acrescente a variável TRACKING_ALLOWED_ORIGINS na Vercel e refaça o deploy " +
+            "(a variável é um const de topo de módulo). " +
+            "Ou ambos: ele estão tão protegidos. A comparação e por igualdade exata — " +
+            "confira esquema (https://) e ausência de barra final."
         )
       }
     } catch (error) {

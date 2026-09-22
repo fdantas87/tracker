@@ -38,6 +38,10 @@ import {
   isDispatchMode,
   parseImmediateEvents,
 } from "@/lib/settings/dispatch-modes"
+import {
+  invalidatePanelOrigins,
+  parseOriginsInput,
+} from "@/lib/settings/origins-config"
 
 const CURRENCIES = ["BRL", "USD", "EUR"] as const
 
@@ -58,6 +62,37 @@ function toMessage(error: unknown, fallback: string): string {
 // ---------------------------------------------------------------------------
 // Geral (settings)
 // ---------------------------------------------------------------------------
+
+export async function saveAllowedOrigins(
+  _prev: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  try {
+    await requireUser()
+
+    const raw = String(formData.get("allowed_origins") ?? "")
+    const parsed = parseOriginsInput(raw)
+    if (typeof parsed === "string") return fail(parsed)
+
+    const supabase = createServiceClient()
+    const { error } = await supabase
+      .from("settings")
+      .update({ allowed_origins: parsed })
+      .eq("id", true)
+
+    if (error) return fail(`Não foi possível salvar: ${error.message}`)
+
+    invalidatePanelOrigins()
+    revalidatePath("/configuracoes")
+    return succeed(
+      parsed.length > 0
+        ? `${parsed.length} domínio(s) salvos.`
+        : "Lista vazia. A captura depende só de TRACKING_ALLOWED_ORIGINS agora."
+    )
+  } catch (error) {
+    return fail(toMessage(error, "Falha ao salvar os domínios."))
+  }
+}
 
 export async function createInitialSettings(): Promise<ActionState> {
   try {

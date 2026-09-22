@@ -11,7 +11,7 @@
 -- Supabase e rode uma vez. O editor executa tudo numa transação única, então
 -- ou o schema inteiro aplica, ou nada aplica — não existe meio-termo.
 --
--- 12 arquivos, na ordem de aplicação:
+-- 13 arquivos, na ordem de aplicação:
 --   supabase/setup-preflight.sql                                      1eb5dba9
 --   supabase/migrations/20260916140000_extensions.sql                 b4e4fd34
 --   supabase/migrations/20260916140100_tables.sql                     245ec9a0
@@ -24,6 +24,7 @@
 --   supabase/migrations/20260919090000_purchases_dados_comprador.sql  1fe77716
 --   supabase/migrations/20260919120000_purchases_forma_pagamento.sql  e279ab08
 --   supabase/migrations/20260921130000_stripe_integration.sql         4cae7404
+--   supabase/migrations/20260922140000_allowed_origins.sql            448cba0a
 -- ============================================================================
 
 -- >>> supabase/setup-preflight.sql
@@ -1472,3 +1473,20 @@ revoke all on public.stripe_accounts from anon, authenticated;
 drop trigger if exists set_updated_at on public.stripe_accounts;
 create trigger set_updated_at before update on public.stripe_accounts
   for each row execute function public.set_updated_at();
+
+-- >>> supabase/migrations/20260922140000_allowed_origins.sql
+-- Allowlist de CORS editável no painel (Configurações → Geral).
+--
+-- Soma-se à variável TRACKING_ALLOWED_ORIGINS, não a substitui: allowlist
+-- final = variável ∪ esta coluna. A variável continua sendo a rede de
+-- segurança, e mudar esta coluna vale em até 60s, sem deploy novo.
+--
+-- Sem CHECK, como dispatch_immediate_events: o formato (só esquema + host,
+-- sem caminho nem barra final) é validado na Server Action que grava.
+--
+-- Esquecer de rodar esta migration NÃO derruba a captura: a leitura cai no
+-- fallback de lista vazia e a variável segue valendo. Só o botão de salvar
+-- do painel falha até ela ser aplicada.
+
+alter table public.settings
+  add column if not exists allowed_origins text[] not null default '{}';

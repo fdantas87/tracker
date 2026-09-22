@@ -792,14 +792,19 @@ Publicar o código novo sem a variável preenchida derruba a captura do deploy
 inteiro — inclusive o da própria Negou. Preencha na Vercel primeiro, depois
 publique.
 
-- **Próximo passo acordado: a allowlist deve sair da variável e ir para o
-  painel.** Uma coluna `allowed_origins` em `settings`, editável em
-  Configurações, lida com o mesmo memo de 60s de
-  `lib/settings/dispatch-config.ts`. A variável **não** some: ela vira bootstrap
-  e rede de segurança, porque uma falha de leitura do banco tem que falhar
-  fechado, e falhar fechado sem fallback derrubaria a captura. Allowlist final =
-  variável ∪ banco. `corsHeaders()` passa a ser assíncrona (3 rotas públicas
-  precisam de `await`).
+**Implementado (2026-09-22):** a allowlist agora sai também do painel. Uma
+coluna `allowed_origins` em `settings` (tipo `text[]`) é editável em
+**Configurações → Geral → Domínios liberados para captura**, e é lida com memo
+de 60s no módulo `lib/settings/origins-config.ts` (mesmo padrão de
+`dispatch-config.ts`). A variável **não foi aposentada**: ela vira bootstrap e
+rede de segurança, porque uma falha de leitura do banco tem que **falhar
+fechado** e manter o que a variável já libera. Allowlist final = variável ∪
+banco, ambas lidas na função `isAllowedOrigin()` agora assíncrona de
+`lib/cors.ts`. Mudança é totalmente invisível para quem chama (`corsHeaders`,
+`jsonResponse`, `preflightResponse` viraram `async`, mas os handlers das 3 rotas
+públicas já são `async` então não exigiu toques em call sites). O `verify:captura`
+agora também consulta o banco e menciona ambas as vias de correção (painel ou
+variável) quando uma origem falha no CORS.
 
 ### ⚠️ Produção PRECISA ser pública (Deployment Protection da Vercel)
 
@@ -1086,6 +1091,20 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-09-22:** Allowlist de domínios editável no painel. Nova coluna
+  `allowed_origins` em `settings` (tipo `text[]`), editável em Configurações →
+  Geral, com UI `components/settings/allowed-origins-section.tsx` (novo), Server
+  Action `saveAllowedOrigins` e módulo `lib/settings/origins-config.ts` (cache
+  de 60s, mesmo padrão do dispatch-config.ts). A variável `TRACKING_ALLOWED_ORIGINS`
+  continua valendo e funciona como bootstrap + fallback (se leitura do banco
+  falhar, o que a variável libera segue liberado). Allowlist final = variável ∪
+  banco. `lib/cors.ts` ficou assíncrona (3 funções agora retornam Promise, mas
+  handlers das 3 rotas públicas já são async, então nenhum call site mudou).
+  `scripts/verify-captura.mjs` agora consulta `allowed_origins` do banco e menciona
+  ambas as vias de correção (painel ou variável) no "O QUE FAZER" de erro CORS.
+  Descoberta importante: não foi necessário adicionar `await` em nenhuma rota —
+  `return jsonResponse(...)` dentro de `async function` aceita tanto `Response`
+  quanto `Promise<Response>`.
 - **2026-09-21:** Tela de Integrações + Stripe. Rota `/integracoes` (item novo na
   sidebar), `lib/webhooks/adapters/stripe.ts`, `app/(dashboard)/integracoes/
   {page,actions}.tsx`, 2 componentes em `components/integrations/` e a migration

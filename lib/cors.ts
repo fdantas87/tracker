@@ -5,9 +5,13 @@
  * checar com `endsWith(".exemplo.com")`: um domínio como
  * `exemplo.com.site-do-atacante.com` passaria no endsWith e ganharia acesso.
  *
- * A lista vem de `TRACKING_ALLOWED_ORIGINS` (uma origem por item, separadas por
- * vírgula) e NÃO é `NEXT_PUBLIC_`: ela é lida só no servidor, e publicá-la no
- * bundle entregaria de graça o mapa de domínios do cliente.
+ * A lista é a SOMA de duas fontes: `TRACKING_ALLOWED_ORIGINS` (uma origem por
+ * item, separadas por vírgula; NÃO é `NEXT_PUBLIC_`, publicá-la no bundle
+ * entregaria de graça o mapa de domínios do cliente) e as origens salvas no
+ * painel, em Configurações → Geral (lib/settings/origins-config.ts). A
+ * variável só vale depois de um deploy novo; o painel vale em até 60s. A
+ * variável fica como rede de segurança: se a leitura do banco falhar, o que ela
+ * libera continua liberado.
  *
  * POR QUE NÃO FICA MAIS HARDCODED: o mesmo repositório é implantado uma vez por
  * cliente. Com a lista fixa no código, o site do cliente novo nunca entra nela
@@ -21,6 +25,8 @@
  * cookies do GA) no próprio site e manda tudo explicitamente no corpo. Menos
  * superfície, menos coisa pra dar errado.
  */
+
+import { getPanelOrigins } from "@/lib/settings/origins-config"
 
 function parseOrigins(bruto: string | undefined): string[] {
   return (bruto ?? "")
@@ -46,21 +52,21 @@ const CONFIGURADAS = parseOrigins(process.env.TRACKING_ALLOWED_ORIGINS)
 const ALLOWED_ORIGINS = new Set([...CONFIGURADAS, ...ownOrigin()])
 
 /**
- * Lista vazia em produção é quase sempre esquecimento de configuração, e o
- * sintoma (zero eventos) não aponta para a causa. O aviso sai uma vez por
- * processo no log da função — não muda o comportamento, que continua sendo
- * recusar, porque falhar fechado é o certo aqui.
+ * Variável vazia em produção deixa a captura dependendo só do painel — e, se o
+ * painel também estiver vazio, o sintoma (zero eventos) não aponta para a
+ * causa. O aviso sai uma vez por processo no log da função.
  */
 if (process.env.NODE_ENV === "production" && CONFIGURADAS.length === 0) {
-  console.error(
-    "[cors] TRACKING_ALLOWED_ORIGINS vazia: nenhuma origem pode capturar. " +
-      "Preencha a variável com os domínios do cliente e refaça o deploy."
+  console.warn(
+    "[cors] TRACKING_ALLOWED_ORIGINS vazia: só as origens salvas em " +
+      "Configurações → Geral podem capturar."
   )
 }
 
 /** Em desenvolvimento, libera localhost pra dar pra testar o track.js local. */
-function isAllowedOrigin(origin: string): boolean {
+async function isAllowedOrigin(origin: string): Promise<boolean> {
   if (ALLOWED_ORIGINS.has(origin)) return true
+  if ((await getPanelOrigins()).includes(origin)) return true
 
   if (process.env.NODE_ENV !== "production") {
     return /^http:\/\/localhost(:\d+)?$/.test(origin) ||
@@ -70,7 +76,9 @@ function isAllowedOrigin(origin: string): boolean {
   return false
 }
 
-export function corsHeaders(request: Request): Record<string, string> {
+export async function corsHeaders(
+  request: Request
+): Promise<Record<string, string>> {
   const origin = request.headers.get("origin")
 
   const headers: Record<string, string> = {
@@ -83,29 +91,31 @@ export function corsHeaders(request: Request): Record<string, string> {
   // Sem origem permitida, simplesmente não devolvemos o header — o navegador
   // bloqueia a leitura da resposta. Requisições sem Origin (server-to-server,
   // curl) não são afetadas por CORS e seguem normalmente.
-  if (origin && isAllowedOrigin(origin)) {
+  if (origin && (await isAllowedOrigin(origin))) {
     headers["Access-Control-Allow-Origin"] = origin
   }
 
   return headers
 }
 
-export function jsonResponse(
+export async function jsonResponse(
   request: Request,
   body: unknown,
   status = 200,
   extraHeaders: Record<string, string> = {}
-): Response {
+): Promise<Response> {
+  const headers = await corsHeaders(request)
   return Response.json(body, {
     status,
     headers: {
-      ...corsHeaders(request),
+      ...headers,
       "Cache-Control": "no-store",
       ...extraHeaders,
     },
   })
 }
 
-export function preflightResponse(request: Request): Response {
-  return new Response(null, { status: 204, headers: corsHeaders(request) })
+export async function preflightResponse(request: Request): Promise<Response> {
+  const headers = await corsHeaders(request)
+  return new Response(null, { status: 204, headers })
 }

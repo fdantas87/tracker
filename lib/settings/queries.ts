@@ -34,6 +34,8 @@ export type SettingsRow = {
   defaultPhoneCountry: string
   dispatchCronUrl: string | null
   hasCronToken: boolean
+  // Origens CORS editáveis no painel (Configurações → Geral)
+  allowedOrigins: string[]
 }
 
 export type StripeAccountRow = {
@@ -113,6 +115,9 @@ export async function getSettings(): Promise<SettingsRow | null> {
     dispatchCronUrl: data.dispatch_cron_url ?? null,
     // Mesma regra do token do webhook: informa que existe, nunca o valor.
     hasCronToken: Boolean(data.dispatch_cron_token_vault_id),
+    allowedOrigins: Array.isArray(data.allowed_origins)
+      ? (data.allowed_origins as string[])
+      : [],
   }
 }
 

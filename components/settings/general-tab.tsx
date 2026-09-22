@@ -20,6 +20,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { AllowedOriginsSection } from "./allowed-origins-section"
 import { InstallationSection } from "./installation-section"
 import { RevealOnce } from "./reveal-once"
 
@@ -29,6 +30,7 @@ export function GeneralTab({ settings }: { settings: SettingsRow | null }) {
       <InstallationSection />
       {settings ? (
         <>
+          <AllowedOriginsSection settings={settings} />
           <GeneralForm settings={settings} />
           <WebhookSection />
         </>
