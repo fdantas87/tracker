@@ -9,6 +9,7 @@ import {
   Globe,
   LayoutDashboard,
   Megaphone,
+  Plug,
   Settings,
   ShoppingCart,
   Users,
@@ -35,6 +36,7 @@ const NAV_ITEMS = [
   { href: "/vendas", label: "Vendas", icon: ShoppingCart },
   { href: "/campanhas", label: "Campanhas", icon: Megaphone },
   { href: "/geo", label: "Geo", icon: Globe },
+  { href: "/integracoes", label: "Integrações", icon: Plug },
 ] as const
 
 export function DashboardSidebar({

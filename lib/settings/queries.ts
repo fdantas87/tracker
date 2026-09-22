@@ -36,6 +36,14 @@ export type SettingsRow = {
   hasCronToken: boolean
 }
 
+export type StripeAccountRow = {
+  isActive: boolean
+  /** Só informa que existe. O valor nunca sai do Vault para a UI. */
+  hasSecretKey: boolean
+  hasWebhookSecret: boolean
+  updatedAt: string | null
+}
+
 export type QueueDepth = {
   /** Eventos esperando a janela de atraso. */
   pending: number
@@ -105,6 +113,34 @@ export async function getSettings(): Promise<SettingsRow | null> {
     dispatchCronUrl: data.dispatch_cron_url ?? null,
     // Mesma regra do token do webhook: informa que existe, nunca o valor.
     hasCronToken: Boolean(data.dispatch_cron_token_vault_id),
+  }
+}
+
+/**
+ * Credenciais do Stripe (linha singleton).
+ *
+ * Nunca devolve os `*_vault_id` nem os segredos — só se cada um existe, mesma
+ * regra do `hasWebhookToken` acima. `null` = nunca foi configurado.
+ */
+export async function getStripeAccount(): Promise<StripeAccountRow | null> {
+  const supabase = createServiceClient()
+
+  const { data, error } = await supabase
+    .from("stripe_accounts")
+    .select("*")
+    .eq("id", true)
+    .maybeSingle()
+
+  if (error) {
+    throw new Error(`Falha ao ler a integração do Stripe: ${error.message}`)
+  }
+  if (!data) return null
+
+  return {
+    isActive: Boolean(data.is_active),
+    hasSecretKey: Boolean(data.secret_key_vault_id),
+    hasWebhookSecret: Boolean(data.webhook_secret_vault_id),
+    updatedAt: data.updated_at ?? null,
   }
 }
 

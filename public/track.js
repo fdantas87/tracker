@@ -97,7 +97,16 @@
   })()
 
   // Domínios cujos links recebem o trck_user_id automaticamente.
-  var CHECKOUT_HOSTS = ["pay.perfectpay.com.br", "go.perfectpay.com.br"]
+  var CHECKOUT_HOSTS = [
+    "pay.perfectpay.com.br",
+    "go.perfectpay.com.br",
+    "buy.stripe.com",
+  ]
+  // O Stripe recebe o id por um parâmetro próprio (client_reference_id), e não
+  // por `src`/`tuid` como o PerfectPay. Payment Link em domínio próprio do
+  // cliente (pay.dominiodele.com) não é reconhecido: nesse caso a venda ainda
+  // é casada pelo email do comprador, um degrau abaixo de confiança.
+  var STRIPE_HOSTS = ["buy.stripe.com"]
   var WHATSAPP_HOSTS = ["wa.me", "api.whatsapp.com", "web.whatsapp.com"]
 
   // ---------------------------------------------------------------------
@@ -698,6 +707,15 @@
           var text = url.searchParams.get("text") || ""
           if (text.indexOf(trckUserId) === -1) {
             url.searchParams.set("text", text + " [" + trckUserId + "]")
+          }
+        } else if (STRIPE_HOSTS.indexOf(url.hostname) !== -1) {
+          // `client_reference_id` é o parâmetro oficial do Stripe pra isso:
+          // aceito na URL do Payment Link e devolvido no webhook
+          // checkout.session.completed. Não sobrescreve valor já existente,
+          // pelo mesmo motivo do `src` do PerfectPay — o site pode estar
+          // usando o campo pra reconciliação própria.
+          if (!url.searchParams.get("client_reference_id")) {
+            url.searchParams.set("client_reference_id", trckUserId)
           }
         } else {
           // O PerfectPay NÃO repassa parâmetro arbitrário pro webhook: só

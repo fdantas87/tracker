@@ -20,17 +20,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { InstallationSection } from "./installation-section"
 import { RevealOnce } from "./reveal-once"
 
 export function GeneralTab({ settings }: { settings: SettingsRow | null }) {
-  if (!settings) {
-    return <FirstRun />
-  }
-
   return (
     <div className="flex flex-col gap-4">
-      <GeneralForm settings={settings} />
-      <WebhookSection />
+      <InstallationSection />
+      {settings ? (
+        <>
+          <GeneralForm settings={settings} />
+          <WebhookSection />
+        </>
+      ) : (
+        <FirstRun />
+      )}
     </div>
   )
 }

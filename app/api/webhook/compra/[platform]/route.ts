@@ -15,17 +15,25 @@ import {
 } from "@/lib/rate-limit"
 import { getDispatchConfig } from "@/lib/settings/dispatch-config"
 import { createServiceClient } from "@/lib/supabase/service"
-import { readJsonBody } from "@/lib/validation"
+import { parseJsonText } from "@/lib/validation"
 import { getAdapter } from "@/lib/webhooks/adapters"
+import {
+  getStripeWebhookSecret,
+  verifyStripeSignature,
+} from "@/lib/webhooks/adapters/stripe"
 import type { NormalizedPurchase } from "@/lib/webhooks/adapters/types"
+
+const MAX_BODY_BYTES = 256_000
 
 /**
  * POST /api/webhook/compra/[platform]
  *
- * Recebe a notificação de compra da plataforma de venda (PerfectPay hoje).
+ * Recebe a notificação de compra da plataforma de venda (PerfectPay e Stripe).
  *
  * Fluxo:
  * 1. valida o token do webhook (o nosso, não o da plataforma)
+ * 1.5. quando a plataforma assina a requisição (Stripe), confere a assinatura
+ *    sobre o corpo BRUTO — é a prova criptográfica de que o payload veio de lá
  * 2. traduz o payload pelo adaptador da plataforma
  * 3. grava/atualiza a compra de forma idempotente
  * 4. tenta casar com um visitante (trck_user_id -> email -> telefone)
@@ -93,8 +101,41 @@ export async function POST(
     return Response.json({ error: "nao_autorizado" }, { status: 401 })
   }
 
+  // --- 1.5. corpo bruto e assinatura da plataforma -------------------------
+  // O corpo é lido como TEXTO antes de virar JSON porque a verificação de
+  // assinatura do Stripe é feita sobre os bytes exatos que ele mandou —
+  // reserializar o objeto muda um espaço e invalida a assinatura. Para as
+  // outras plataformas o resultado é idêntico ao `readJsonBody` de antes:
+  // mesmo limite de tamanho, mesma validação, mesma resposta de erro.
+  const contentLength = request.headers.get("content-length")
+  if (contentLength && Number(contentLength) > MAX_BODY_BYTES) {
+    return Response.json({ error: "payload_invalido" }, { status: 400 })
+  }
+
+  let rawBody: string
+  try {
+    rawBody = await request.text()
+  } catch {
+    return Response.json({ error: "payload_invalido" }, { status: 400 })
+  }
+
+  if (platform === "stripe") {
+    // Aqui a autenticação é criptográfica, não um token compartilhado: só quem
+    // tem o signing secret consegue produzir esta assinatura. Falha fechado —
+    // sem secret configurado, nenhum webhook é aceito.
+    const secret = await getStripeWebhookSecret()
+    if (!secret) {
+      return Response.json({ error: "stripe_nao_configurado" }, { status: 503 })
+    }
+
+    const signature = request.headers.get("stripe-signature")
+    if (!verifyStripeSignature(rawBody, signature, secret)) {
+      return Response.json({ error: "assinatura_invalida" }, { status: 401 })
+    }
+  }
+
   // --- 2. tradução ---------------------------------------------------------
-  const body = await readJsonBody(request, 256_000)
+  const body = parseJsonText(rawBody, MAX_BODY_BYTES)
   if (!body) {
     return Response.json({ error: "payload_invalido" }, { status: 400 })
   }
@@ -262,9 +303,17 @@ type VisitorMatch = {
  * 1. trck_user_id — veio da URL do checkout, é o vínculo direto e certo
  * 2. email (hash) — o comprador usou o mesmo email no site e no checkout
  * 3. telefone (hash) — último recurso
+ * 4. o vínculo que ESTA transação já tinha, de um webhook anterior
  *
- * Sem vínculo, a compra é gravada mesmo assim: perder a venda por não saber de
- * onde ela veio seria muito pior do que registrá-la sem atribuição.
+ * O passo 4 não é atribuição nova: é preservação. A gravação é um upsert da
+ * linha inteira, e nem toda plataforma repete todos os dados em toda transição
+ * de status — o evento de reembolso do Stripe, por exemplo, não carrega o
+ * `client_reference_id` da sessão de checkout. Sem este passo, um reembolso de
+ * visitante que nunca deixou email no site apagaria o `trck_user_id` gravado
+ * na compra, e a venda perderia a origem justamente por ter sido reembolsada.
+ *
+ * Sem vínculo nenhum, a compra é gravada mesmo assim: perder a venda por não
+ * saber de onde ela veio seria muito pior do que registrá-la sem atribuição.
  */
 async function findVisitor(
   purchase: NormalizedPurchase,
@@ -301,6 +350,35 @@ async function findVisitor(
       .order("updated_at", { ascending: false })
       .limit(1)
     if (data && data.length > 0) return { visitor: data[0], method: "phone" }
+  }
+
+  // 4. Vínculo preservado: esta transação já foi gravada antes com um
+  // visitante? Então o webhook atual só não trouxe o dado — ele não desfez o
+  // vínculo. Mantém o que já existia, inclusive o `match_method` original,
+  // que continua sendo a verdade de COMO a venda foi casada.
+  const { data: anterior } = await supabase
+    .from("purchases")
+    .select("trck_user_id, match_method")
+    .eq("transaction_id", purchase.transactionId)
+    .maybeSingle()
+
+  if (anterior?.trck_user_id) {
+    const { data: visitor } = await supabase
+      .from("visitors")
+      .select("*")
+      .eq("trck_user_id", anterior.trck_user_id)
+      .maybeSingle()
+
+    if (visitor) {
+      const metodo = anterior.match_method
+      return {
+        visitor,
+        method:
+          metodo === "trck_user_id" || metodo === "email" || metodo === "phone"
+            ? metodo
+            : "trck_user_id",
+      }
+    }
   }
 
   return { visitor: null, method: "none" }

@@ -32,6 +32,11 @@ const META = {
     title: "Geolocalização",
     description: "De onde vêm os seus visitantes.",
   },
+  "/integracoes": {
+    title: "Integrações",
+    description:
+      "Plataformas de venda, webhooks e automações conectadas ao tracker.",
+  },
   "/configuracoes": {
     title: "Configurações",
     description: "Ajustes do painel e conta.",

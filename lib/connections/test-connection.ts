@@ -308,6 +308,74 @@ export async function testGa4Connection(params: {
   }
 }
 
+/**
+ * Testa a secret key do Stripe lendo o saldo da conta.
+ *
+ * Diferente do Meta Pixel (que precisa ENVIAR um evento porque o token não tem
+ * permissão de leitura) e do GA4 (que nunca confirma credencial), aqui a
+ * leitura resolve na hora: `GET /v1/balance` é a chamada que o próprio Stripe
+ * indica para validar uma chave, e responde 401 sem rodeios quando ela está
+ * errada. Nada é criado, nada é cobrado, nada aparece no relatório do cliente.
+ *
+ * O que este teste NÃO cobre, e a UI diz isso com todas as letras: o webhook
+ * signing secret. Nenhuma API prova antecipadamente que uma assinatura vai
+ * bater — só um evento real chegando prova. A conferência é disparar um
+ * webhook de teste pelo painel do Stripe e olhar a tela de Eventos.
+ */
+export async function testStripeConnection(params: {
+  secretKey: string
+}): Promise<ConnectionTestResult> {
+  const secretKey = params.secretKey.trim()
+
+  if (!/^(sk|rk)_(test|live)_[A-Za-z0-9]+$/.test(secretKey)) {
+    return {
+      status: "erro",
+      message: "Secret key fora do formato esperado (sk_test_... ou sk_live_...).",
+    }
+  }
+
+  const isLive = secretKey.startsWith("sk_live_") || secretKey.startsWith("rk_live_")
+
+  try {
+    const response = await fetchWithTimeout("https://api.stripe.com/v1/balance", {
+      headers: { Authorization: `Bearer ${secretKey}` },
+    })
+
+    const body = (await response.json()) as {
+      livemode?: boolean
+      available?: { currency?: string }[]
+      error?: { message?: string; type?: string }
+    }
+
+    if (!response.ok || body.error) {
+      return {
+        status: "erro",
+        message:
+          response.status === 401
+            ? "O Stripe recusou a chave (401). Confira se copiou a secret key inteira."
+            : (body.error?.message ?? `O Stripe respondeu HTTP ${response.status}.`),
+      }
+    }
+
+    const moedas = (body.available ?? [])
+      .map((saldo) => saldo.currency?.toUpperCase())
+      .filter(Boolean)
+      .join(", ")
+
+    return {
+      status: "ok",
+      message: `Conectado à conta Stripe em modo ${isLive ? "produção" : "teste"}${
+        moedas ? ` (${moedas})` : ""
+      }.`,
+      detail: isLive
+        ? undefined
+        : "Chave de TESTE: só enxerga pagamentos de teste. Para registrar vendas reais, use a chave de produção.",
+    }
+  } catch (error) {
+    return { status: "erro", message: networkErrorMessage(error) }
+  }
+}
+
 function metaErrorMessage(error: { message?: string; code?: number }): string {
   switch (error.code) {
     case 190:

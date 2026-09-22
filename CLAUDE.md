@@ -41,6 +41,8 @@ apps/tracking.negou.net/
 │   │   ├── faturamento/page.tsx            # ✅ fase 8b — redirect("/vendas"), rota antiga
 │   │   ├── campanhas/page.tsx              # [fase 9]
 │   │   ├── geo/page.tsx                    # ✅ fase 8c — mapa-múndi, chips de local, receita por região
+│   │   ├── integracoes/page.tsx            # ✅ Stripe — lista de plataformas conectadas
+│   │   ├── integracoes/actions.ts          # ✅ Stripe — credenciais no Vault, teste, remoção
 │   │   └── configuracoes/page.tsx          # [fase 4] CRUD de credenciais (Server Actions)
 │   ├── layout.tsx                          # ✅ fase 1/3 — fontes, ThemeProvider, TooltipProvider
 │   ├── globals.css                         # ✅ fase 1 — tokens HSL, gradiente, glass, tabular-nums
@@ -85,6 +87,7 @@ apps/tracking.negou.net/
 │   ├── validation.ts                       # ✅ fase 5 — limpeza de tudo que entra
 │   ├── crypto/hash.ts                      # ✅ fase 5 — normalização + SHA-256 do Meta
 │   ├── webhooks/adapters/{index,types,perfectpay}.ts  # ✅ fase 7 — formato normalizado por plataforma
+│   ├── webhooks/adapters/stripe.ts         # ✅ Stripe — tradução + assinatura HMAC (server-only)
 │   └── dispatch/purchase-dispatch.ts       # ✅ fase 7 — Purchase pro Meta + GA4
 ├── components/
 │   ├── ui/                                 # ✅ shadcn (button, card, badge, separator, switch, sidebar, sheet, dropdown-menu, input, label, alert, tooltip, skeleton, table, popover, chart)
@@ -97,6 +100,7 @@ apps/tracking.negou.net/
 │   │                                       #    sale-detail-sheet, purchase-status-badge
 │   │                                       # ✅ fase 8c — geo-view (dona da vista do mapa), world-map,
 │   │                                       #    world-map-impl, ranking-chips
+│   ├── integrations/{integration-card,stripe-card}.tsx  # ✅ Stripe — cards e formulário de credenciais
 │   ├── dashboard-sidebar.tsx               # ✅ fase 3 — navegação (drawer no celular, sidebar no desktop)
 │   ├── user-menu.tsx                       # ✅ fase 3 — conta + sair
 │   ├── page-header.tsx                     # ✅ fase 3 — cabeçalho e placeholder de fase
@@ -115,6 +119,7 @@ apps/tracking.negou.net/
     │                                        #    fase 5 — rate_limits; fase 7.5 — event_queue
     │                                        #    revisão geo — geo_enriquecido (8 colunas + fill_visitor_pii)
     │                                        #    fase 8b — purchases_dados_comprador, purchases_forma_pagamento
+    │                                        #    Stripe — stripe_integration (platform CHECK + stripe_accounts)
     ├── setup-preflight.sql                  # ✅ deploy 1-clique — checa Vault e banco já instalado
     ├── setup.sql                            # ✅ deploy 1-clique — GERADO, não editar (npm run build:setup-sql)
     ├── verify_phase2.sql                    # ✅ fase 2 — queries de verificação (roda manual, não é migration)
@@ -224,7 +229,7 @@ Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) 
 
 ## Webhook de compra (fase 7 — implementado)
 
-`POST /api/webhook/compra/[platform]` — PerfectPay implementado; Hotmart, Kiwify e Eduzz entram escrevendo um adaptador e registrando em `lib/webhooks/adapters/index.ts`.
+`POST /api/webhook/compra/[platform]` — PerfectPay e Stripe implementados (o Stripe veio depois; ver "Tela de Integrações + Stripe"); Hotmart, Kiwify e Eduzz entram escrevendo um adaptador e registrando em `lib/webhooks/adapters/index.ts`.
 
 - **Formato do PerfectPay confirmado na doc oficial**, não deduzido: OpenAPI em `https://app.perfectpay.com.br/docs/api.json` (eles publicam também `llms.txt` e `llms-full.txt`). Campos: `code` (id da transação), `sale_amount`, `currency_enum` (1=BRL, 2=USD, 3=EUR), `sale_status_enum`, e os objetos `product`, `plan`, `customer` (`full_name`, `email`, `identification_number`) e `metadata`.
 - **Detalhe que a doc avisa e que seria impossível adivinhar:** no PostBack alguns status chegam JÁ normalizados pelo próprio PerfectPay — `8/10/16 → 2`, `11 → 6`, `17 → 9`, `18/19/20 → 7`. O mapa em `perfectpay.ts` cobre todos os 19 valores mesmo assim, porque receber um valor inesperado é pior do que ter linhas a mais.
@@ -652,6 +657,97 @@ faturamento. **Nenhuma migration**: todas as colunas já existiam desde
 
 ---
 
+## Tela de Integrações + Stripe (implementado)
+
+Rota `/integracoes`, na lista principal da sidebar. Ela reúne o que fala **com**
+o tracker (plataforma de venda, webhook, automação, MCP); Configurações continua
+cuidando dos **destinos** para onde o tracker manda evento (Meta, GA4). São
+direções opostas do mesmo fluxo, e foi a mistura das duas numa tela só que
+motivou a separação.
+
+- **O token global de webhook NÃO foi movido pra cá.** Ele continua em
+  Configurações → Geral, e a tela nova apenas aponta pra lá. Duplicar a
+  interface de um segredo em duas telas é convite pra as duas divergirem — e o
+  token é um só para todas as plataformas.
+- **O Stripe é a primeira plataforma cuja autenticação não é o token
+  compartilhado.** Ele assina cada requisição: header `Stripe-Signature`, com
+  `HMAC-SHA256(signing_secret, "<timestamp>.<corpo bruto>")`. As duas camadas
+  convivem — o token global é o primeiro portão (vai na querystring da URL
+  cadastrada, porque o Stripe não permite header customizado, mesma situação do
+  PerfectPay), e a assinatura é a prova criptográfica de que o payload veio
+  mesmo do Stripe.
+- **Por isso `route.ts` passou a ler o corpo como TEXTO antes de virar JSON.**
+  Reserializar o objeto muda um espaço e invalida a assinatura. `readJsonBody`
+  ganhou um irmão, `parseJsonText`, que recebe o texto já lido; `readJsonBody`
+  virou um wrapper dele, e o comportamento para `/api/event` e `/api/identify`
+  é byte a byte o mesmo de antes.
+- **`stripe_accounts` guarda DUAS credenciais no Vault, não uma** — é a
+  diferença estrutural em relação a `meta_pixels`/`ga4_accounts`/
+  `meta_ad_accounts`. A secret key autentica chamadas NOSSAS à API do Stripe
+  (teste de conexão); o signing secret verifica o que o Stripe manda PRA GENTE.
+  Os dois no Vault, e não como hash igual ao `webhook_token_hash`: aquele só
+  precisa ser comparado, este precisa ser USADO como chave de HMAC.
+- **Singleton (`id boolean`), como `settings`.** Um cliente por deploy, um
+  Stripe por cliente — a mesma premissa que já trata o PerfectPay como único.
+- **A chave de idempotência é o `payment_intent` (`pi_...`), não o id da
+  Checkout Session.** É o único identificador que também aparece no evento de
+  reembolso, então é o que amarra as transições de status na MESMA linha de
+  `purchases`. Usar `cs_...` faria o reembolso criar uma venda nova.
+- **A rota agora preserva o vínculo com a visita quando o webhook novo não traz
+  vínculo próprio** (4º passo do `findVisitor`). Não é atribuição nova, é
+  proteção: a gravação é upsert da linha inteira, e o evento de reembolso do
+  Stripe não carrega o `client_reference_id` da sessão. Sem isso, o reembolso de
+  um visitante que nunca deixou email no site apagaria o `trck_user_id` da
+  compra — a venda perderia a origem justamente por ter sido reembolsada.
+- **`client_reference_id` é o `?src=` do Stripe**, confirmado na doc oficial
+  (`docs.stripe.com/payment-links/url-parameters`): parâmetro de URL aceito no
+  Payment Link, até 200 caracteres, devolvido no `checkout.session.completed`.
+  O `track.js` decora sozinho os links `buy.stripe.com`, sem sobrescrever valor
+  que o site já tenha posto ali. Payment Link em domínio próprio do cliente
+  (`pay.dominiodele.com`) não é reconhecido: nesse caso a venda cai no
+  casamento por email, um degrau abaixo de confiança.
+- **UTM de venda Stripe fica nula, e isso não é bug.** O Stripe aceita `utm_*`
+  na URL do Payment Link, mas — a doc é explícita — elas só viajam para a URL de
+  redirecionamento pós-pagamento, nunca para o webhook. A atribuição de campanha
+  continua vindo do visitante casado, que a guarda desde o PageView.
+- **Moeda zero-decimal foi tratada na origem.** O Stripe manda o valor na menor
+  unidade, e para JPY/KRW/VND e outras 13 essa unidade já é a inteira. Dividir
+  por 100 faria ¥5.000 virar ¥50 — erro financeiro que não apareceria como erro
+  nenhum. Moedas de 3 casas (BHD, JOD, KWD, OMR, TND) dividem por 1000.
+- **Reembolso PARCIAL é recusado de propósito.** A venda continua valendo, só
+  com valor menor, e `purchases` não tem onde guardar "quanto voltou". Marcar a
+  linha inteira como reembolsada zeraria uma receita que em boa parte ficou de
+  pé — é o tipo de número errado que ninguém confere.
+- **Chargeback/disputa ficou DE FORA desta entrega, e está escrito no código.**
+  O objeto Dispute do Stripe não traz dados do comprador, e como a gravação é
+  upsert da linha inteira, aceitá-lo apagaria email e nome já gravados. Fazer
+  direito exige uma chamada extra à API do Stripe para reidratar o Charge. O
+  enum de `purchases.status` já tem `chargeback` pronto para quando for a hora.
+- **O teste de conexão do Stripe é leitura real** (`GET /v1/balance`), não envio
+  de evento como no Meta Pixel: aqui a credencial é confirmada na hora, com 401
+  sem rodeios quando está errada. Já o signing secret **não tem como ser testado
+  antes** — nenhuma API prova que uma assinatura vai bater. A tela diz isso e
+  manda disparar um webhook de teste pelo painel do Stripe, mesma honestidade já
+  adotada com o `"verificar"` do GA4.
+- **A tela orienta a assinar só os 4 eventos tratados.** Um endpoint cadastrado
+  como "todos os eventos" faz o Stripe mandar dezenas de tipos que não são
+  venda; eles são recusados sem efeito nenhum aqui, mas aparecem como falha no
+  log do próprio Stripe e confundem na hora de investigar.
+- **A tela de Vendas não precisou de mudança nenhuma.** `purchases.platform` é
+  lida como texto puro, sem enum no TypeScript e sem filtro de plataforma na UI
+  — conferido antes de construir. Venda do Stripe já aparece lá.
+
+### ⚠️ Ordem obrigatória: migration ANTES do deploy (de novo)
+
+`20260921130000_stripe_integration.sql` acrescenta `'stripe'` ao CHECK de
+`purchases.platform` e cria `stripe_accounts`. Sem ela: o CHECK recusa a linha
+e **a venda do Stripe não é registrada**, e a tela de Integrações não consegue
+ler as credenciais. A tela avisa qual arquivo rodar em vez de quebrar, mas o
+webhook não tem como degradar — ele recusa, porque aceitar sem poder conferir a
+assinatura injetaria venda falsa no painel e no Meta.
+
+---
+
 ## Arquitetura multi-cliente (1 repo → N deploys)
 
 O mesmo repositório é implantado uma vez por cliente: cada um com seu projeto
@@ -915,6 +1011,23 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - ✅ ~~Gerar o primeiro dado real~~ — feito em 2026-09-18: uma visita à LP criou o visitante e o PageView, com `fbp`, IP, geo (`São Paulo/SP`) e `pixel_fired = false` (visitante anônimo, modo adaptativo), entrando na fila com a janela de 15 min. Foi essa visita que revelou o bug do `ga_client_id`.
 - ✅ ~~Rodar a migration `20260918120000_geo_enriquecido.sql` e publicar a revisão de geo/fuso~~ — feito em 2026-09-18, nesta ordem. Migration aplicada e conferida no SQL Editor (8 colunas com os tipos certos; `fill_visitor_pii` com **uma só** assinatura, de 7 parâmetros — sem sobrecarga), deploy por `vercel --prod` e conferência ao vivo passando. Falta ainda confirmar o `purchase` no GA4 na primeira venda real (pendência herdada da fase 7).
 - ✅ ~~Rodar as migrations `20260919090000_purchases_dados_comprador.sql` e `20260919120000_purchases_forma_pagamento.sql`~~ — feito pelo usuário em 2026-09-19 e conferido por REST: as 5 colunas novas de `purchases` respondem. **O deploy da fase 8b ainda não foi feito** — quando for, não há ordem a respeitar aqui, porque as migrations já estão no ar.
+- ✅ ~~Stripe — rodar a migration `20260921130000_stripe_integration.sql`~~ —
+  feito pelo usuário em 2026-09-21 e conferido por aqui: `stripe_accounts`
+  existe (singleton, trigger `set_updated_at` disparando, `anon` bloqueada),
+  `purchases.platform` aceita `'stripe'` **e continua aceitando** os 4 valores
+  antigos, e o CHECK segue recusando qualquer valor fora do vocabulário — a
+  troca de constraint não afrouxou nada. 18 checagens direto no banco, todas as
+  linhas de teste escritas e apagadas na hora. **Falta só o resto do fluxo, que
+  exige login nas contas do usuário:**
+  (1) no painel, Integrações → Conectar Stripe, colando a **secret key**
+  (Stripe → Desenvolvedores → Chaves de API) e o **signing secret** (Stripe →
+  Desenvolvedores → Webhooks → o endpoint → Revelar); (2) no Stripe, cadastrar
+  o endpoint `https://SEU_DOMINIO/api/webhook/compra/stripe?token=SEU_TOKEN`
+  (o token é o de Configurações → Geral) assinando **apenas** os 4 eventos que
+  a tela lista; (3) clicar em "Testar" no card do Stripe — a secret key é
+  confirmada na hora; (4) disparar um webhook de teste pelo painel do Stripe e
+  conferir a venda na tela de Vendas — é a única forma de provar que o signing
+  secret está certo, porque nenhuma API confirma isso antes.
 - **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase. *(Obsoleto para clientes novos: o botão do README faz isso. Ver "Deploy 1-clique".)*
 - **Deploy 1-clique — o que falta, e é só do usuário:** (1) **revogar o PAT do GitHub** que está em texto puro na URL do remote em `.git/config` e reconfigurar sem credencial; (2) rodar o `supabase/setup.sql` num projeto Supabase **novo**, do zero, e conferir com `verify_phase2.sql` — é o gate: não publicar um botão que aponta para um SQL não testado; (3) tornar o repo `fdantas87/tracker` público (o botão exige repo público) depois de decidir sobre `CLAUDE.md` e `implementation_plan.md`; (4) abrir a URL do botão uma vez e conferir que os 6 campos aparecem com os 2 defaults preenchidos.
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
@@ -973,6 +1086,52 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-09-21:** Tela de Integrações + Stripe. Rota `/integracoes` (item novo na
+  sidebar), `lib/webhooks/adapters/stripe.ts`, `app/(dashboard)/integracoes/
+  {page,actions}.tsx`, 2 componentes em `components/integrations/` e a migration
+  `20260921130000_stripe_integration.sql`. **Nenhuma dependência nova** — nem o
+  SDK do Stripe: a verificação de assinatura é `node:crypto` e a chamada de
+  teste é um `fetch`, como já é feito com Meta e GA4.
+  - **A decisão que define a integração:** a chave de idempotência é o
+    `payment_intent`, não o id da Checkout Session. É o único identificador que
+    aparece também no evento de reembolso — com `cs_...`, um reembolso criaria
+    uma venda nova em vez de atualizar a existente.
+  - **Bug de perda de dado encontrado durante o desenho e corrigido junto:** a
+    gravação é upsert da linha inteira, e o `charge.refunded` do Stripe não
+    carrega o `client_reference_id` da sessão. Um reembolso de visitante sem
+    email no site apagaria o `trck_user_id` da compra. O `findVisitor` ganhou um
+    4º passo que preserva o vínculo já gravado — vale para todas as plataformas,
+    não só o Stripe.
+  - **Confirmado na doc oficial antes de construir, não suposto:** (1) o
+    `client_reference_id` é parâmetro de URL aceito em Payment Link e volta no
+    `checkout.session.completed`; (2) as `utm_*` também são aceitas na URL, mas
+    só chegam à URL de redirecionamento pós-pagamento — nunca ao webhook, por
+    isso os campos de UTM da venda Stripe ficam nulos de propósito; (3) o
+    formato exato do `Stripe-Signature` e do payload assinado.
+  - **Duas armadilhas tratadas na origem:** moeda zero-decimal (JPY e outras 15,
+    onde dividir por 100 daria ¥50 no lugar de ¥5.000) e reembolso parcial
+    (recusado, porque marcar a linha como reembolsada zeraria uma receita que em
+    boa parte ficou de pé).
+  - **Fora do escopo, escrito no código e não escondido:** chargeback/disputa (o
+    objeto Dispute não traz dados do comprador e o upsert os apagaria),
+    assinaturas/recorrência, e Payment Link em domínio próprio do cliente.
+  - Verificado: `tsc --noEmit` limpo, `npm run build` verde com `/integracoes`
+    saindo como rota dinâmica, `check:actions` e `check:setup-sql` OK,
+    `node --check` no `track.js`, **57/57 no teste de mesa** (30 de tradução de
+    evento, 8 de reembolso, 5 de evento fora do escopo e 14 de assinatura HMAC —
+    incluindo corpo alterado em 1 byte, replay de 10 minutos, rotação de secret
+    com duas assinaturas e assinatura não-hex sem lançar) e **27/27 no teste ao
+    vivo** contra o servidor real: os portões da rota, a regressão do PerfectPay
+    depois do refactor de leitura do corpo (o caminho todo até o adaptador, sem
+    gravar compra nenhuma), a regressão de `/api/event` e `/api/identify`, e a
+    tela nova autenticada com as 6 telas anteriores ainda de pé. Usuário
+    temporário apagado no fim, banco sem nenhuma escrita.
+  - **O que NÃO foi verificado por aqui, e é o gate:** a migration não foi
+    aplicada (regra do projeto: migration é colada no SQL Editor pelo usuário),
+    então o caminho completo — assinatura válida → venda gravada → Purchase no
+    Meta e no GA4 — depende dela e de uma conta Stripe de teste. O teste ao vivo
+    prova que, sem a migration, o webhook **recusa** em vez de aceitar sem
+    conferir assinatura, que é o comportamento certo.
 - **2026-09-21:** Deploy 1-clique. Três gargalos que exigiam o desenvolvedor
   viraram um arquivo, um botão e um formulário. Arquivos novos:
   `scripts/build-setup-sql.mjs`, `supabase/setup-preflight.sql`,
