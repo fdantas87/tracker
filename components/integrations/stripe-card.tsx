@@ -7,8 +7,10 @@ import {
   CheckCircle2,
   Copy,
   CreditCard,
+  ExternalLink,
   Info,
   LoaderCircle,
+  Pencil,
   Plug,
   Trash2,
   TriangleAlert,
@@ -102,69 +104,45 @@ export function StripeCard({
   return (
     <IntegrationCard
       name="Stripe"
-      icon={CreditCard}
-      status={configurado ? "conectado" : "disponivel"}
+      icon="/logos/stripe-icon.svg"
+      status="conectado"
       description="Cartão, Pix e boleto pelo Stripe. A venda chega por webhook assinado e é casada com a visita que a originou."
-    >
-      {configurado ? (
+      isActive={account?.isActive}
+      headerAction={
+        <Switch
+          checked={account?.isActive ?? false}
+          onCheckedChange={toggleActive}
+          disabled={pending}
+          aria-label={account?.isActive ? "Desativar" : "Ativar"}
+          className="shrink-0 mt-2"
+        />
+      }
+      actions={
         <>
-          <div className="flex flex-wrap items-center gap-2">
-            <Switch
-              checked={account?.isActive ?? false}
-              onCheckedChange={toggleActive}
-              disabled={pending}
-              aria-label={account?.isActive ? "Marcar como inativa" : "Marcar como ativa"}
-            />
-            <span className="mr-auto text-xs text-muted-foreground">
-              {account?.isActive ? "Ativa" : "Inativa"}
-            </span>
-
-            <Button variant="outline" size="sm" onClick={runTest} disabled={testing}>
-              {testing ? <LoaderCircle className="animate-spin" /> : <Plug />}
-              Testar
-            </Button>
-            <Button variant="outline" size="sm" onClick={() => setFormOpen(true)}>
-              Credenciais
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              onClick={() => setConfirmOpen(true)}
-              aria-label="Desconectar"
-            >
-              <Trash2 />
-            </Button>
-          </div>
-
-          <p className="text-xs text-muted-foreground">
-            Secret key e signing secret guardados cifrados no Vault · não podem
-            ser consultados
-          </p>
-
-          {testResult ? <TestResult result={testResult} /> : null}
-
-          <WebhookSetup hasWebhookToken={hasWebhookToken} />
-        </>
-      ) : (
-        <div className="flex flex-wrap items-center gap-2">
-          <Button size="sm" onClick={() => setFormOpen(true)}>
-            Conectar Stripe
+          <Button variant="ghost" size="icon-sm" onClick={runTest} disabled={testing} title="Testar Conexão">
+            {testing ? <LoaderCircle className="animate-spin size-4" /> : <Plug className="size-4 text-muted-foreground" />}
           </Button>
-          {account?.hasSecretKey || account?.hasWebhookSecret ? (
-            <span className="text-xs text-amber">
-              Falta{" "}
-              {account.hasSecretKey ? "o signing secret" : "a secret key"} para a
-              integração funcionar.
-            </span>
-          ) : null}
-        </div>
-      )}
-
+          <Button variant="ghost" size="icon-sm" onClick={() => setFormOpen(true)} aria-label="Editar">
+            <Pencil className="size-4 text-muted-foreground" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            onClick={() => setConfirmOpen(true)}
+            aria-label="Desconectar"
+            className="text-destructive hover:bg-destructive/10"
+          >
+            <Trash2 className="size-4" />
+          </Button>
+        </>
+      }
+      testResult={testResult ? <TestResult result={testResult} /> : null}
+    >
       <StripeFormDialog
-        key={configurado ? "editar" : "novo"}
         open={formOpen}
         onOpenChange={setFormOpen}
         account={account}
+        hasWebhookToken={hasWebhookToken}
       />
 
       <AlertDialog open={confirmOpen} onOpenChange={setConfirmOpen}>
@@ -189,14 +167,16 @@ export function StripeCard({
   )
 }
 
-function StripeFormDialog({
+export function StripeFormDialog({
   open,
   onOpenChange,
   account,
+  hasWebhookToken,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   account: StripeAccountRow | null
+  hasWebhookToken: boolean
 }) {
   const [state, formAction, isPending] = useActionState<ActionState, FormData>(
     saveStripeCredentials,
@@ -209,7 +189,7 @@ function StripeFormDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
+      <DialogContent className="sm:max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Credenciais do Stripe</DialogTitle>
           <DialogDescription>
@@ -231,16 +211,16 @@ function StripeFormDialog({
                 account?.hasSecretKey ? "Deixe em branco para manter a atual" : "sk_live_..."
               }
               required={!account?.hasSecretKey}
-              className="h-10 font-mono"
+              className="h-14 w-full rounded-2xl border-primary/20 bg-background/80 px-5 font-mono shadow-sm backdrop-blur transition-colors hover:border-primary/40 focus-visible:border-primary/40 focus-visible:ring-0"
             />
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[13px] text-muted-foreground leading-relaxed mt-1">
               Painel do Stripe → Desenvolvedores → Chaves de API. Use a chave de
               produção para registrar vendas reais; a de teste (sk_test_) só
               enxerga pagamentos de teste.
             </p>
           </div>
 
-          <div className="flex flex-col gap-2">
+          <div className="flex flex-col gap-2 pt-2">
             <Label htmlFor="webhook_secret">Signing secret do webhook</Label>
             <Input
               id="webhook_secret"
@@ -251,9 +231,9 @@ function StripeFormDialog({
                 account?.hasWebhookSecret ? "Deixe em branco para manter o atual" : "whsec_..."
               }
               required={!account?.hasWebhookSecret}
-              className="h-10 font-mono"
+              className="h-14 w-full rounded-2xl border-primary/20 bg-background/80 px-5 font-mono shadow-sm backdrop-blur transition-colors hover:border-primary/40 focus-visible:border-primary/40 focus-visible:ring-0"
             />
-            <p className="text-xs text-muted-foreground">
+            <p className="text-[13px] text-muted-foreground leading-relaxed mt-1">
               Aparece ao cadastrar o endpoint em Desenvolvedores → Webhooks, no
               botão “Revelar”. É a chave que confere a assinatura de cada evento:
               sem ela, nenhum webhook do Stripe é aceito.
@@ -264,16 +244,20 @@ function StripeFormDialog({
             <p className="text-sm text-destructive">{state.message}</p>
           ) : null}
 
-          <DialogFooter>
-            <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+          <DialogFooter className="gap-2 sm:gap-0 pt-4">
+            <Button type="button" variant="ghost" className="h-12 rounded-xl" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
-            <Button type="submit" disabled={isPending}>
-              {isPending ? <LoaderCircle className="animate-spin" /> : null}
+            <Button type="submit" className="h-12 rounded-xl px-8" disabled={isPending}>
+              {isPending ? <LoaderCircle className="animate-spin size-4" /> : null}
               Salvar
             </Button>
           </DialogFooter>
         </form>
+
+        <div className="pt-2">
+          <WebhookSetup hasWebhookToken={hasWebhookToken} />
+        </div>
       </DialogContent>
     </Dialog>
   )
@@ -303,21 +287,38 @@ function WebhookSetup({ hasWebhookToken }: { hasWebhookToken: boolean }) {
   }
 
   return (
-    <div className="rounded-xl border bg-background/40 p-4">
-      <p className="text-sm font-medium">URL para cadastrar no Stripe</p>
-      <p className="mt-1 text-xs text-muted-foreground">
+    <div className="rounded-2xl border border-primary/10 bg-gradient-to-b from-primary/5 to-transparent p-5 sm:p-6 mt-4 w-full">
+      <p className="text-[15px] font-semibold tracking-tight text-center sm:text-left">URL para cadastrar no Stripe</p>
+      <p className="mt-1 text-[13px] text-muted-foreground text-center sm:text-left">
         Desenvolvedores → Webhooks → Adicionar endpoint. Troque
-        <code className="mx-1 font-mono">SEU_TOKEN</code>
-        pelo token de webhook gerado em Configurações → Geral.
+        <code className="mx-1 font-mono text-[12px] font-bold text-foreground">SEU_TOKEN</code>
+        pelo token de webhook gerado em Configurações.
       </p>
 
-      <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-        <code className="min-w-0 flex-1 overflow-x-auto rounded-lg bg-background/80 px-3 py-2 font-mono text-xs break-all">
-          {url}
-        </code>
-        <Button type="button" variant="outline" size="sm" onClick={copy} className="shrink-0">
-          {copied ? <Check /> : <Copy />}
-          {copied ? "Copiado" : "Copiar"}
+      <div className="mt-4 flex w-full flex-col items-center justify-between gap-3 rounded-2xl border border-primary/20 bg-background/80 p-2 shadow-sm backdrop-blur transition-colors hover:border-primary/40 sm:flex-row overflow-hidden">
+        <div 
+          className="relative flex-1 w-full overflow-hidden"
+          style={{ 
+            maskImage: "linear-gradient(to right, black 75%, transparent 100%)",
+            WebkitMaskImage: "linear-gradient(to right, black 75%, transparent 100%)"
+          }}
+        >
+          <code 
+            className="block px-3 py-2 text-left font-mono text-[16px] sm:text-[18px] leading-tight tracking-tight text-foreground whitespace-nowrap" 
+            style={{ fontFamily: "'JetBrains Mono', monospace" }}
+          >
+            {url}
+          </code>
+        </div>
+        <Button 
+          type="button" 
+          variant={copied ? "secondary" : "default"} 
+          size="default" 
+          onClick={copy} 
+          className="z-10 w-full shrink-0 gap-2 h-12 rounded-xl px-6 sm:w-auto"
+        >
+          {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+          {copied ? "Copiado" : "Copiar URL"}
         </Button>
       </div>
 

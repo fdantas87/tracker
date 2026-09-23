@@ -46,7 +46,7 @@ export function RankingChips({
   return (
     <section className="flex min-w-0 flex-1 flex-col gap-1.5 transition-colors">
       <header className="flex items-center justify-between gap-2">
-        <h3 className="text-[9px] font-bold uppercase tracking-tighter text-muted-foreground sm:text-[10px]">
+        <h3 className="text-[11px] font-bold uppercase tracking-tighter text-muted-foreground sm:text-xs">
           {titulo}
         </h3>
         {restantes > 0 ? (
@@ -77,7 +77,7 @@ export function RankingChips({
               </span>
               <span
                 className={cn(
-                  "relative ml-auto font-mono font-semibold tabular-nums",
+                  "relative font-mono font-semibold tabular-nums ml-2",
                   isVazio && "text-muted-foreground"
                 )}
               >
@@ -87,7 +87,7 @@ export function RankingChips({
           )
 
           const classe = cn(
-            "relative flex items-center gap-1.5 overflow-hidden rounded-md px-1.5 py-0.5 text-[10px] leading-tight transition-colors",
+            "relative flex items-center gap-1.5 overflow-hidden rounded-md px-1.5 py-0.5 text-xs leading-tight transition-colors",
             selecionado
               ? "bg-primary/20 text-primary ring-1 ring-primary/30"
               : isVazio

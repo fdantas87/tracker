@@ -10,6 +10,10 @@ import { EventsFilters } from "@/components/dashboard/events-filters"
 import { EventsTable } from "@/components/dashboard/events-table"
 import { PaginationLinks } from "@/components/dashboard/pagination-links"
 import { StatusChips } from "@/components/dashboard/status-chips"
+import { DelayTab } from "@/components/dashboard/delay-tab"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { getSettings, getQueueDepth } from "@/lib/settings/queries"
+
 import {
   getEventNames,
   getSerieDiaria,
@@ -148,6 +152,11 @@ export default async function EventosPage({
   searchParams: SearchParams
 }) {
   const filtros = lerFiltros(await searchParams)
+  
+  const [queue, settings] = await Promise.all([
+    getQueueDepth(),
+    getSettings().catch(() => null),
+  ])
 
   // Em "Tudo" não há intervalo pré-preenchido (ver getSerieDiaria), então não
   // existe série a desenhar. Sem gráfico o topo volta a ser uma coluna só — do
@@ -159,39 +168,52 @@ export default async function EventosPage({
   const chaveTopo = `${filtros.periodo}|${filtros.evento}|${filtros.q}`
 
   return (
-    <>
+    <div className="flex flex-col gap-8">
       <PageHeader
         title="Eventos"
         description="Tudo que foi capturado e o que aconteceu com cada envio para a Conversions API."
       />
 
-      <Suspense fallback={<Skeleton className="h-10 w-full rounded-xl -mt-2 mb-2 sm:-mt-4" />}>
-        <FiltersSlot filtros={filtros} />
-      </Suspense>
+      <Tabs defaultValue="lista" className="gap-4">
+        <TabsList className="w-full overflow-x-auto sm:w-auto">
+          <TabsTrigger value="lista">Lista</TabsTrigger>
+          <TabsTrigger value="delay">Delay</TabsTrigger>
+        </TabsList>
 
-      {/* Bloco de topo: título e chips empilhados à esquerda, gráfico à direita
-          ocupando a altura das duas linhas. Abaixo de `lg` vira uma coluna só,
-          na ordem chips → gráfico (os chips são navegação; o gráfico é
-          indicador). */}
-      <section className={`grid gap-4 ${temGrafico ? "lg:grid-cols-2 lg:gap-6" : ""}`}>
-        <div className="flex min-w-0 flex-col justify-between gap-4">
-          <Suspense key={chaveTopo} fallback={<ChipsCarregando />}>
-            <ChipsSlot filtros={filtros} />
+        <TabsContent value="lista" className="mt-8 flex flex-col gap-8">
+          <Suspense fallback={<Skeleton className="h-10 w-full rounded-xl -mt-2 mb-2 sm:-mt-4" />}>
+            <FiltersSlot filtros={filtros} />
           </Suspense>
-        </div>
 
-        {temGrafico ? (
-          <Suspense key={chaveTopo} fallback={<Skeleton className="h-56 w-full rounded-2xl" />}>
-            <ChartWidgetSlot filtros={filtros} />
+          {/* Bloco de topo: título e chips empilhados à esquerda, gráfico à direita
+              ocupando a altura das duas linhas. Abaixo de `lg` vira uma coluna só,
+              na ordem chips → gráfico (os chips são navegação; o gráfico é
+              indicador). */}
+          <section className={`grid gap-4 ${temGrafico ? "lg:grid-cols-2 lg:gap-6" : ""}`}>
+            <div className="flex min-w-0 flex-col justify-between gap-4">
+              <Suspense key={chaveTopo} fallback={<ChipsCarregando />}>
+                <ChipsSlot filtros={filtros} />
+              </Suspense>
+            </div>
+
+            {temGrafico ? (
+              <Suspense key={chaveTopo} fallback={<Skeleton className="h-56 w-full rounded-2xl" />}>
+                <ChartWidgetSlot filtros={filtros} />
+              </Suspense>
+            ) : null}
+          </section>
+
+          {/* A chave força o Suspense a reagir a cada mudança de filtro, em vez de
+              segurar a tela antiga até a nova query terminar. */}
+          <Suspense key={JSON.stringify(filtros)} fallback={<Carregando />}>
+            <Conteudo filtros={filtros} />
           </Suspense>
-        ) : null}
-      </section>
+        </TabsContent>
 
-      {/* A chave força o Suspense a reagir a cada mudança de filtro, em vez de
-          segurar a tela antiga até a nova query terminar. */}
-      <Suspense key={JSON.stringify(filtros)} fallback={<Carregando />}>
-        <Conteudo filtros={filtros} />
-      </Suspense>
-    </>
+        <TabsContent value="delay" className="mt-8">
+          <DelayTab settings={settings} queue={queue} />
+        </TabsContent>
+      </Tabs>
+    </div>
   )
 }

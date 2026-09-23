@@ -101,7 +101,7 @@ export function GeoView({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-4 lg:grid-cols-2 xl:grid-cols-4">
         <Bloco
         titulo="Visitantes por localização"
         legenda={`${visitantes.comCoordenada.toLocaleString("pt-BR")} de ${visitantes.total.toLocaleString(
@@ -123,7 +123,7 @@ export function GeoView({
           ) : null
         }
       >
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-3">
           <RankingChips
             titulo="Países"
             ranking={visitantes.paises}
@@ -164,7 +164,7 @@ export function GeoView({
           "pt-BR"
         )} ${visitantes.leads.total === 1 ? "lead encontrado" : "leads encontrados"}`}
       >
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-3">
           <RankingChips
             titulo="Países"
             ranking={visitantes.leads.paises}
@@ -198,7 +198,7 @@ export function GeoView({
           "pt-BR"
         )} ${visitantes.clientes.total === 1 ? "cliente encontrado" : "clientes encontrados"}`}
       >
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-3">
           <RankingChips
             titulo="Países"
             ranking={visitantes.clientes.paises}
@@ -232,7 +232,7 @@ export function GeoView({
           "pt-BR"
         )} ${receita.aprovadas === 1 ? "venda aprovada" : "vendas aprovadas"}`}
       >
-        <div className="grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-3">
           <RankingChips titulo="Países" ranking={receita.paises} formatar={contarReceita} />
           <RankingChips titulo="Estados" ranking={receita.estados} formatar={contarReceita} />
           <RankingChips titulo="Cidades" ranking={receita.cidades} formatar={contarReceita} />
@@ -262,8 +262,9 @@ export function GeoView({
       </Bloco>
       </div>
 
-      <div className="glass rounded-2xl p-2 sm:p-3">
-        <div className="aspect-4/3 w-full sm:aspect-video lg:aspect-2/1">
+      <div className="relative flex flex-col justify-center overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-3 sm:p-4 shadow-sm">
+        <div className="pointer-events-none absolute -top-48 left-1/2 h-96 w-full max-w-2xl -translate-x-1/2 rounded-full bg-primary/10 opacity-50 blur-3xl" />
+        <div className="relative z-10 aspect-4/3 w-full sm:aspect-video lg:aspect-2/1">
           <WorldMap
             pontos={pontos}
             destaque={destaque}
@@ -293,16 +294,20 @@ function Bloco({
   children: React.ReactNode
 }) {
   return (
-    <section className="glass flex flex-col gap-4 rounded-2xl p-4 sm:p-5">
-      <header className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-sm font-semibold tracking-tight">{titulo}</h2>
-          <p className="text-xs text-muted-foreground">{legenda}</p>
-        </div>
-        {acao}
-      </header>
+    <section className="relative flex flex-col overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-5 sm:p-6 shadow-sm">
+      <div className="pointer-events-none absolute -top-24 left-1/2 h-48 w-full max-w-xs -translate-x-1/2 rounded-full bg-primary/15 opacity-50 blur-3xl" />
+      
+      <div className="relative z-10 flex flex-col gap-5">
+        <header className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-base font-semibold tracking-tight">{titulo}</h2>
+            <p className="text-[13px] text-muted-foreground mt-1">{legenda}</p>
+          </div>
+          {acao}
+        </header>
 
-      {children}
+        {children}
+      </div>
     </section>
   )
 }

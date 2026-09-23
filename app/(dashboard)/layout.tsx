@@ -26,6 +26,15 @@ export default async function DashboardLayout({
     redirect("/login")
   }
 
+  // Verificação de conexão com o banco (RLS)
+  const [visitors, events, purchases] = await Promise.all([
+    supabase.from("visitors").select("*", { count: "exact", head: true }),
+    supabase.from("events_log").select("*", { count: "exact", head: true }),
+    supabase.from("purchases").select("*", { count: "exact", head: true }),
+  ])
+  const dbHasError = Boolean(visitors.error || events.error || purchases.error)
+  const dbErrors = [visitors, events, purchases].filter((r) => r.error).map((r) => r.error?.message)
+
   const email = user.email ?? "sem email"
   // Definido no primeiro acesso (`completeSetup`). Fica em `app_metadata`, e
   // não em `user_metadata`, porque o usuário reescreve o segundo sozinho com a
@@ -38,7 +47,7 @@ export default async function DashboardLayout({
 
   return (
     <SidebarProvider>
-      <DashboardSidebar userEmail={email} brandName={orgName} />
+      <DashboardSidebar userEmail={email} brandName={orgName} dbHasError={dbHasError} dbErrors={dbErrors as string[]} />
       <SidebarInset>
         <TopbarHeader email={email} />
         <div className="flex flex-1 flex-col gap-6 p-4 sm:p-6">{children}</div>

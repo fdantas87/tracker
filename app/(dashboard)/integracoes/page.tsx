@@ -1,6 +1,5 @@
 import type { Metadata } from "next"
-import Link from "next/link"
-import { Bot, Plug, ShoppingBag, TriangleAlert, Webhook } from "lucide-react"
+import { Bot, Plug, ShoppingBag, TriangleAlert, Webhook, Plus } from "lucide-react"
 
 import { pageTitle } from "@/lib/branding"
 import { getSettings, getStripeAccount, type StripeAccountRow } from "@/lib/settings/queries"
@@ -9,6 +8,13 @@ import {
   IntegrationSection,
 } from "@/components/integrations/integration-card"
 import { StripeCard } from "@/components/integrations/stripe-card"
+import { WebhookTab } from "@/components/integrations/webhook-tab"
+import { SiteTab } from "@/components/integrations/site-tab"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { PlatformManager } from "@/components/integrations/platform-manager"
+import { PerfectPayCard } from "@/components/integrations/perfectpay-card"
+import { Button } from "@/components/ui/button"
+import { Pencil } from "lucide-react"
 
 export const metadata: Metadata = {
   title: pageTitle("Integrações"),
@@ -22,13 +28,15 @@ export const metadata: Metadata = {
  * tracker manda evento (Meta, GA4). São direções opostas do mesmo fluxo, e
  * misturá-las numa tela só foi o que motivou esta separação.
  */
-export default async function IntegracoesPage() {
+export default async function IntegrationsPage() {
   const [stripe, settings] = await Promise.all([
     lerStripe(),
     getSettings().catch(() => null),
   ])
 
   const hasWebhookToken = settings?.hasWebhookToken ?? false
+  const isStripeConfigured = Boolean(stripe.account?.hasSecretKey && stripe.account?.hasWebhookSecret)
+  const isPerfectPayConfigured = hasWebhookToken
 
   return (
     <div className="flex flex-col gap-8">
@@ -49,73 +57,68 @@ export default async function IntegracoesPage() {
         </div>
       ) : null}
 
-      <IntegrationSection
-        title="Plataformas de vendas"
-        description="De onde vêm as compras. Cada venda recebida é gravada, casada com a visita que a originou e enviada como Purchase para o Meta e para o GA4."
-      >
-        <StripeCard account={stripe.account} hasWebhookToken={hasWebhookToken} />
+      <Tabs defaultValue="site" className="gap-4">
+        <TabsList className="w-full overflow-x-auto sm:w-auto">
+          <TabsTrigger value="site">Site</TabsTrigger>
+          <TabsTrigger value="plataformas">Plataformas</TabsTrigger>
+          <TabsTrigger value="webhook">Webhook</TabsTrigger>
+        </TabsList>
 
-        <IntegrationCard
-          name="PerfectPay"
-          icon={ShoppingBag}
-          status={hasWebhookToken ? "conectado" : "disponivel"}
-          description="Recebe as compras pelo PostBack. Não tem credencial própria: a autenticação é o token de webhook do painel."
-        >
-          <div className="rounded-xl border bg-background/40 p-4">
-            <p className="text-xs text-muted-foreground">
-              {hasWebhookToken ? (
-                <>
-                  A URL e o token ficam em{" "}
-                  <Link
-                    href="/configuracoes"
-                    className="font-medium text-primary hover:underline"
-                  >
-                    Configurações → Geral
-                  </Link>
-                  , onde o token também pode ser trocado. Ele é o mesmo para
-                  todas as plataformas — trocá-lo exige recadastrar a URL em
-                  cada uma.
-                </>
-              ) : (
-                <>
-                  Ainda não existe token de webhook neste painel. Gere um em{" "}
-                  <Link
-                    href="/configuracoes"
-                    className="font-medium text-primary hover:underline"
-                  >
-                    Configurações → Geral
-                  </Link>{" "}
-                  para começar a receber compras.
-                </>
-              )}
-            </p>
-          </div>
-        </IntegrationCard>
-      </IntegrationSection>
+        <TabsContent value="site" className="mt-4">
+          <SiteTab settings={settings} />
+        </TabsContent>
 
-      <IntegrationSection
-        title="Próximas integrações"
-        description="Ainda não construídas. Estão listadas para deixar claro o que esta tela vai reunir, e não para serem configuradas agora."
-      >
-        <IntegrationCard
-          name="Webhooks livres"
-          icon={Webhook}
-          status="em-breve"
-          description="Receber eventos de qualquer sistema, com mapeamento de campos configurável em vez de um adaptador em código."
-        />
-        <IntegrationCard
-          name="Ferramentas de automação"
-          icon={Plug}
-          status="em-breve"
-          description="Enviar visitantes, eventos e vendas para automações externas conforme eles acontecem."
-        />
-        <IntegrationCard
-          name="MCP"
-          icon={Bot}
-          status="em-breve"
-          description="Expor os dados do painel para agentes de IA consultarem direto, sem exportação manual."
-        />
-      </IntegrationSection>
+        <TabsContent value="plataformas" className="mt-4 flex flex-col gap-8">
+          <IntegrationSection
+            title="Plataformas de vendas"
+            description="De onde vêm as compras. Cada venda recebida é gravada, casada com a visita que a originou e enviada como Purchase para o Meta e para o GA4."
+          >
+            {isStripeConfigured && (
+              <StripeCard account={stripe.account} hasWebhookToken={hasWebhookToken} />
+            )}
+
+            {isPerfectPayConfigured && (
+              <PerfectPayCard />
+            )}
+
+            {!isStripeConfigured && !isPerfectPayConfigured && (
+              <div className="col-span-full flex flex-col items-center justify-center p-12 text-center rounded-3xl border border-dashed border-primary/20 bg-gradient-to-b from-primary/5 to-transparent">
+                <p className="text-muted-foreground text-sm">Nenhuma plataforma configurada.</p>
+              </div>
+            )}
+          </IntegrationSection>
+
+          <PlatformManager stripeAccount={stripe.account} hasWebhookToken={hasWebhookToken} />
+
+          <IntegrationSection
+            title="Próximas integrações"
+            description="Ainda não construídas. Estão listadas para deixar claro o que esta tela vai reunir, e não para serem configuradas agora."
+          >
+            <IntegrationCard
+              name="Webhooks livres"
+              icon={Webhook}
+              status="em-breve"
+              description="Receber eventos de qualquer sistema, com mapeamento de campos configurável em vez de um adaptador em código."
+            />
+            <IntegrationCard
+              name="Ferramentas de automação"
+              icon={Plug}
+              status="em-breve"
+              description="Enviar visitantes, eventos e vendas para automações externas conforme eles acontecem."
+            />
+            <IntegrationCard
+              name="MCP"
+              icon={Bot}
+              status="em-breve"
+              description="Expor os dados do painel para agentes de IA consultarem direto, sem exportação manual."
+            />
+          </IntegrationSection>
+        </TabsContent>
+
+        <TabsContent value="webhook" className="mt-4">
+          <WebhookTab />
+        </TabsContent>
+      </Tabs>
     </div>
   )
 }

@@ -83,7 +83,7 @@ export async function saveAllowedOrigins(
     if (error) return fail(`Não foi possível salvar: ${error.message}`)
 
     invalidatePanelOrigins()
-    revalidatePath("/configuracoes")
+    revalidatePath("/pixels")
     return succeed(
       parsed.length > 0
         ? `${parsed.length} domínio(s) salvos.`
@@ -118,7 +118,7 @@ export async function createInitialSettings(): Promise<ActionState> {
 
     if (error) return fail(`Não foi possível criar: ${error.message}`)
 
-    revalidatePath("/configuracoes")
+    revalidatePath("/pixels")
     return succeed(
       "Configuração criada. Copie o token agora — ele não aparece de novo.",
       token
@@ -156,7 +156,7 @@ export async function saveGeneralSettings(
 
     if (error) return fail(`Não foi possível salvar: ${error.message}`)
 
-    revalidatePath("/configuracoes")
+    revalidatePath("/pixels")
     return succeed("Configurações salvas.")
   } catch (error) {
     return fail(toMessage(error, "Falha ao salvar."))
@@ -177,7 +177,7 @@ export async function regenerateWebhookToken(): Promise<ActionState> {
 
     if (error) return fail(`Não foi possível gerar: ${error.message}`)
 
-    revalidatePath("/configuracoes")
+    revalidatePath("/pixels")
     return succeed(
       "Token novo gerado. O anterior parou de funcionar — atualize a URL na plataforma de venda.",
       token
@@ -245,7 +245,6 @@ export async function saveDispatchSettings(
         dispatch_mode: mode,
         dispatch_delay_seconds: delaySeconds,
         dispatch_immediate_events: immediate,
-        form_capture_enabled: formData.get("form_capture_enabled") === "on",
         default_phone_country: phoneCountry,
         dispatch_cron_url: cronUrlRaw || null,
       })
@@ -255,10 +254,35 @@ export async function saveDispatchSettings(
 
     // Sem isto a mudança demoraria até 60s pra valer (o memo do módulo).
     invalidateDispatchConfig()
-    revalidatePath("/configuracoes")
+    revalidatePath("/pixels")
     return succeed("Configurações de disparo salvas.")
   } catch (error) {
     return fail(toMessage(error, "Falha ao salvar."))
+  }
+}
+
+export async function saveFormCaptureSettings(
+  _prev: ActionState,
+  formData: FormData
+): Promise<ActionState> {
+  try {
+    await requireUser()
+
+    const supabase = createServiceClient()
+    const { error } = await supabase
+      .from("settings")
+      .update({
+        form_capture_enabled: formData.get("form_capture_enabled") === "on",
+      })
+      .eq("id", true)
+
+    if (error) return fail(`Não foi possível salvar: ${error.message}`)
+
+    invalidatePanelOrigins()
+    revalidatePath("/integracoes")
+    return succeed("Leitura de formulários salva.")
+  } catch (error) {
+    return fail(toMessage(error, "Falha ao salvar a leitura de formulários."))
   }
 }
 
@@ -300,7 +324,7 @@ export async function regenerateCronToken(): Promise<ActionState> {
       }
     }
 
-    revalidatePath("/configuracoes")
+    revalidatePath("/pixels")
     return succeed(
       "Token do cron gerado. O pg_cron lê o valor direto do Vault, então não é preciso colar em lugar nenhum.",
       token
@@ -382,7 +406,7 @@ export async function saveAccount(
         return fail(`Não foi possível salvar: ${error.message}`)
       }
 
-      revalidatePath("/configuracoes")
+      revalidatePath("/pixels")
       return succeed("Conta adicionada.")
     }
 
@@ -417,7 +441,7 @@ export async function saveAccount(
       return fail(`Não foi possível salvar: ${error.message}`)
     }
 
-    revalidatePath("/configuracoes")
+    revalidatePath("/pixels")
     return succeed(
       secret ? "Conta atualizada e segredo substituído." : "Conta atualizada."
     )
@@ -463,7 +487,7 @@ export async function deleteAccount(
       })
     }
 
-    revalidatePath("/configuracoes")
+    revalidatePath("/pixels")
     return succeed("Conta removida.")
   } catch (error) {
     return fail(toMessage(error, "Falha ao remover a conta."))
@@ -494,7 +518,7 @@ export async function toggleAccountActive(
 
     if (error) return fail(`Não foi possível atualizar: ${error.message}`)
 
-    revalidatePath("/configuracoes")
+    revalidatePath("/pixels")
     return succeed(nextActive ? "Conta ativada." : "Conta desativada.")
   } catch (error) {
     return fail(toMessage(error, "Falha ao atualizar a conta."))

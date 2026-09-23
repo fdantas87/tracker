@@ -50,25 +50,29 @@ export function EventsChartWidget({ dados }: { dados: SeriePonto[] }) {
   const visivel = React.useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
 
   return (
-    <div className="glass w-full rounded-2xl p-3 sm:p-4">
-      <div className="flex items-center justify-between gap-2">
-        <Label htmlFor="eventos-chart-toggle" className="text-sm text-muted-foreground">
-          Disparos por dia
-        </Label>
-        <Switch
-          id="eventos-chart-toggle"
-          size="sm"
-          checked={visivel}
-          onCheckedChange={definirVisivel}
-          aria-label={visivel ? "Ocultar gráfico" : "Exibir gráfico"}
-        />
-      </div>
-
-      {visivel ? (
-        <div className="mt-2">
-          <EventsChart dados={dados} />
+    <div className="relative flex w-full flex-col overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-5 sm:p-6 shadow-sm">
+      <div className="pointer-events-none absolute -top-16 left-1/2 h-32 w-full max-w-[200px] -translate-x-1/2 rounded-full bg-primary/15 opacity-50 blur-2xl" />
+      
+      <div className="relative z-10 flex w-full flex-col">
+        <div className="flex items-center justify-between gap-2">
+          <Label htmlFor="eventos-chart-toggle" className="text-sm font-medium text-muted-foreground">
+            Disparos por dia
+          </Label>
+          <Switch
+            id="eventos-chart-toggle"
+            size="sm"
+            checked={visivel}
+            onCheckedChange={definirVisivel}
+            aria-label={visivel ? "Ocultar gráfico" : "Exibir gráfico"}
+          />
         </div>
-      ) : null}
+
+        {visivel ? (
+          <div className="mt-4">
+            <EventsChart dados={dados} />
+          </div>
+        ) : null}
+      </div>
     </div>
   )
 }

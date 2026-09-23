@@ -25,7 +25,7 @@ export const STATUS_META: Record<
   },
   pending: {
     label: "Na fila",
-    classe: "border-border bg-muted/60 text-muted-foreground",
+    classe: "border-amber/30 bg-amber/10 text-amber",
     Icone: Clock,
     ajuda:
       "Aguardando a janela de atraso. Se a pessoa converter antes, a fila é liberada na hora e o evento sai enriquecido.",

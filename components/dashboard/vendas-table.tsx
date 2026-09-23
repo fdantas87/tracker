@@ -17,15 +17,13 @@ import { formatarCompleto, formatarDataHora, formatarMoeda } from "@/lib/dashboa
 import type { VendaRow } from "@/lib/dashboard/vendas"
 
 function Vazio({ filtrado }: { filtrado: boolean }) {
+  if (!filtrado) return null
+  
   return (
     <div className="glass flex min-h-48 flex-col items-center justify-center gap-2 rounded-2xl p-8 text-center">
-      <p className="text-sm font-medium">
-        {filtrado ? "Nenhuma venda com esses filtros" : "Nenhuma venda registrada ainda"}
-      </p>
+      <p className="text-sm font-medium">Nenhuma venda com esses filtros</p>
       <p className="max-w-md text-sm text-muted-foreground">
-        {filtrado
-          ? "Tente ampliar o período ou limpar os filtros."
-          : "As vendas aparecem aqui assim que a plataforma de pagamento chamar o webhook de compra."}
+        Tente ampliar o período ou limpar os filtros.
       </p>
     </div>
   )

@@ -35,19 +35,22 @@ export function StatCard({
   }[tom]
 
   return (
-    <div className="glass rounded-2xl p-5">
-      <p className="text-sm text-muted-foreground">{label}</p>
+    <div className="relative flex flex-col justify-center overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-6 sm:p-8 shadow-sm">
+      <div className="pointer-events-none absolute -top-16 left-1/2 h-32 w-full max-w-[200px] -translate-x-1/2 rounded-full bg-primary/15 opacity-50 blur-2xl" />
+      <div className="relative z-10 flex flex-col items-center text-center">
+        <p className="text-sm text-muted-foreground">{label}</p>
 
-      <p className="mt-2 font-mono text-2xl font-semibold tabular-nums sm:text-3xl">
-        {valor}
-      </p>
-
-      {legenda ? (
-        <p className={cn("mt-2 flex items-center gap-1.5 text-xs", corDaLegenda)}>
-          {Icone ? <Icone className="size-3.5 shrink-0" /> : null}
-          <span className="min-w-0 truncate">{legenda}</span>
+        <p className="mt-2 font-mono text-4xl font-semibold tabular-nums tracking-tight">
+          {valor}
         </p>
-      ) : null}
+
+        {legenda ? (
+          <p className={cn("mt-3 flex items-center justify-center gap-1.5 text-[13px]", corDaLegenda)}>
+            {Icone ? <Icone className="size-3.5 shrink-0" /> : null}
+            <span className="min-w-0 truncate">{legenda}</span>
+          </p>
+        ) : null}
+      </div>
     </div>
   )
 }

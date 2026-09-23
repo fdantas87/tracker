@@ -5,6 +5,7 @@ import Link from "next/link"
 import { Check, Copy, TriangleAlert } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { ShaderCard } from "@/components/ui/shader-card"
 
 /**
  * Instruções de instalação do track.js na aba Geral — sem checagem ao vivo:
@@ -16,44 +17,36 @@ export function InstallationSection() {
   const snippet = `<script src="${origin}/track.js" defer></script>`
 
   return (
-    <div className="glass flex flex-col gap-4 rounded-2xl p-6">
-      <div>
-        <h2 className="text-base font-medium">Conexão com o site</h2>
-        <p className="mt-1 max-w-prose text-sm text-muted-foreground">
-          Instale o script de captura no site e confirme que os eventos estão
-          chegando.
-        </p>
-      </div>
+    <div className="relative flex flex-col items-center justify-center overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-8 text-center sm:p-12 shadow-sm">
+      {/* Decorative background glow */}
+      <div className="pointer-events-none absolute -top-24 left-1/2 h-48 w-full max-w-md -translate-x-1/2 rounded-full bg-primary/15 opacity-50 blur-3xl" />
 
-      <div className="rounded-xl border bg-background/40 p-4">
-        <p className="text-sm font-medium">
-          Passo 1: insira o código na tag <code className="font-mono">&lt;head&gt;</code> do
-          site
-        </p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Cole antes de qualquer outra tag de analytics, em todas as páginas.
-        </p>
-        <CopySnippet snippet={snippet} />
-      </div>
-
-      <div className="rounded-xl border bg-background/40 p-4">
-        <p className="text-sm font-medium">Passo 2: confirme a instalação</p>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Abra o site numa janela anônima e depois abra a tela{" "}
-          <Link href="/eventos" className="text-primary underline underline-offset-2">
-            Eventos
-          </Link>{" "}
-          — um PageView deve aparecer em poucos segundos.
-        </p>
-
-        <div className="mt-3 flex items-start gap-2 rounded-lg border border-amber/40 bg-amber/5 p-3">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber" />
-          <p className="text-xs text-muted-foreground">
-            Teste sempre em janela anônima. Testar logado, no mesmo navegador
-            do painel, não prova nada: a sessão da Vercel atravessa a proteção
-            de deploy e o site carrega normalmente mesmo se um visitante
-            comum estivesse sendo bloqueado.
+      <div className="relative z-10 flex w-full max-w-5xl flex-col items-center gap-10">
+        <div className="space-y-3">
+          <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">Conexão com o site</h2>
+          <p className="mx-auto max-w-lg text-sm text-muted-foreground sm:text-base">
+            Instale o script de captura no site e confirme que os eventos estão chegando.
           </p>
+        </div>
+
+        <div className="w-full">
+          <CopySnippet snippet={snippet} />
+        </div>
+
+        <div className="flex w-full flex-col items-center pt-2">
+          <div 
+            className="flex w-full items-center justify-center gap-2.5 text-center text-[15px] text-muted-foreground whitespace-normal lg:whitespace-nowrap"
+            style={{ fontFamily: "'Manrope', sans-serif" }}
+          >
+            <TriangleAlert className="size-[18px] shrink-0 text-amber-500" />
+            <p className="text-balance lg:text-left">
+              Abra o site <strong>SEMPRE</strong> numa janela anônima e depois acesse a tela{" "}
+              <Link href="/eventos" className="text-primary underline underline-offset-4 transition-colors hover:text-primary/80">
+                Eventos
+              </Link>{" "}
+              — um PageView deve aparecer em poucos segundos.
+            </p>
+          </div>
         </div>
       </div>
     </div>
@@ -75,20 +68,39 @@ function CopySnippet({ snippet }: { snippet: string }) {
   }
 
   return (
-    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-      <code className="min-w-0 flex-1 overflow-x-auto rounded-lg bg-background/80 px-3 py-2 font-mono text-xs break-all">
-        {snippet}
-      </code>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={copy}
-        className="shrink-0"
-      >
-        {copied ? <Check /> : <Copy />}
-        {copied ? "Copiado" : "Copiar"}
-      </Button>
+    <div className="relative flex w-full flex-col items-center gap-4 sm:flex-row sm:items-stretch">
+      <div className="relative flex w-full flex-col items-center justify-between gap-3 overflow-hidden rounded-2xl border border-primary/10 bg-gradient-to-b from-primary/5 to-transparent p-2 shadow-sm transition-colors hover:border-primary/20 sm:flex-row">
+        <ShaderCard roundness="md" />
+        
+        <div className="relative z-10 flex w-full flex-col items-center justify-between gap-3 overflow-hidden sm:flex-row">
+          {/* Máscara horizontal para esconder o texto quando ultrapassar o espaço, sem barra de rolagem */}
+          <div 
+            className="relative flex-1 w-full overflow-hidden"
+            style={{ 
+              maskImage: "linear-gradient(to right, black 75%, transparent 100%)",
+              WebkitMaskImage: "linear-gradient(to right, black 75%, transparent 100%)"
+            }}
+          >
+            <code 
+              className="block px-4 py-2 text-left font-mono text-[40px] leading-none tracking-tight text-foreground whitespace-nowrap" 
+              style={{ fontFamily: "'JetBrains Mono', monospace" }}
+            >
+              {snippet}
+            </code>
+          </div>
+
+          <Button
+            type="button"
+            variant={copied ? "secondary" : "default"}
+            size="default"
+            onClick={copy}
+            className="z-10 w-full shrink-0 gap-2 h-12 rounded-xl px-6 sm:w-auto"
+          >
+            {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+            {copied ? "Copiado" : "Copiar código"}
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }
