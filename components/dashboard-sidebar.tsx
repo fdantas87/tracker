@@ -39,7 +39,6 @@ const NAV_ITEMS = [
   { href: "/eventos", label: "Eventos", icon: Activity },
   { href: "/leads", label: "Visitantes", icon: Users },
   { href: "/vendas", label: "Vendas", icon: ShoppingCart },
-  { href: "/campanhas", label: "Campanhas", icon: Megaphone },
   { href: "/geo", label: "Geo", icon: Globe },
   { href: "/integracoes", label: "Integrações", icon: Plug },
   { href: "/pixels", label: "Pixels", icon: Settings },

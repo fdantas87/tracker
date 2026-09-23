@@ -23,10 +23,6 @@ const META = {
     title: "Vendas",
     description: "Faturamento, reembolsos e formas de pagamento — direto das compras que chegaram pelo webhook.",
   },
-  "/campanhas": {
-    title: "Campanhas",
-    description: "Desempenho das campanhas de anúncios.",
-  },
   "/geo": {
     title: "Geo",
     description: "De onde vêm os seus visitantes.",

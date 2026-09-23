@@ -1,3 +1,5 @@
+import { DEFAULT_PHONE_COUNTRY } from "@/lib/phone-country"
+
 import { perfectPayAdapter } from "./perfectpay"
 import { stripeAdapter } from "./stripe"
 import type { WebhookAdapter } from "./types"
@@ -26,4 +28,33 @@ export function getAdapter(platform: string): WebhookAdapter | null {
 
 export function supportedPlatforms(): string[] {
   return Object.keys(ADAPTERS)
+}
+
+/**
+ * País (ISO-2) da compra, derivado da moeda da transação — é o que decide o
+ * código de discagem do telefone do comprador em `normalizePhone`.
+ *
+ * A moeda é o sinal confiável que o webhook traz: a geolocalização do
+ * visitante erra com viagem e VPN, e um país fixo por deploy erra quando o
+ * mesmo cliente vende em mais de uma moeda.
+ *
+ * EUR -> PT é aproximação: o euro circula em ~20 países. Quando alguma
+ * plataforma passar a mandar o país do comprador, ele deve ter precedência.
+ */
+const PAIS_POR_MOEDA: Record<string, string> = {
+  BRL: "BR",
+  USD: "US",
+  EUR: "PT",
+}
+
+export function obterPaisDaMoeda(moeda: string | null | undefined): string {
+  const codigo = moeda?.trim().toUpperCase()
+  const pais = codigo ? PAIS_POR_MOEDA[codigo] : undefined
+  if (pais) return pais
+
+  console.warn(
+    `[webhooks] moeda "${moeda ?? ""}" ausente ou não mapeada: telefone ` +
+      `normalizado com o país padrão do deploy (${DEFAULT_PHONE_COUNTRY}).`
+  )
+  return DEFAULT_PHONE_COUNTRY
 }

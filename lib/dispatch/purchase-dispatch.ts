@@ -14,6 +14,7 @@ import { sendToAllGa4 } from "@/lib/ga4/mp"
 import { sendToAllPixels } from "@/lib/meta/capi"
 import { getDispatchConfig } from "@/lib/settings/dispatch-config"
 import { createServiceClient } from "@/lib/supabase/service"
+import { obterPaisDaMoeda } from "@/lib/webhooks/adapters"
 import type { NormalizedPurchase } from "@/lib/webhooks/adapters/types"
 
 /**
@@ -57,7 +58,7 @@ export async function dispatchPurchase(
   const emailHash =
     hashEmail(purchase.buyerEmail) ?? asString(visitor?.email_hash)
   const phoneHash =
-    hashPhone(purchase.buyerPhone, config.defaultPhoneCountry) ??
+    hashPhone(purchase.buyerPhone, obterPaisDaMoeda(purchase.currency)) ??
     asString(visitor?.phone_hash)
 
   // GA4: reusa o client_id e o session_id capturados na visita, pra a compra

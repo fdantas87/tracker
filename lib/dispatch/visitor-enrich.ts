@@ -2,6 +2,7 @@ import "server-only"
 
 import { hashEmail, hashName, hashPhone } from "@/lib/crypto/hash"
 import { createServiceClient } from "@/lib/supabase/service"
+import { obterPaisDaMoeda } from "@/lib/webhooks/adapters"
 import type { NormalizedPurchase } from "@/lib/webhooks/adapters/types"
 
 /**
@@ -29,13 +30,15 @@ const NOTHING: EnrichResult = { enriched: false, filled: [] }
 
 export async function enrichVisitorFromPurchase(
   trckUserId: string | null | undefined,
-  purchase: NormalizedPurchase,
-  defaultPhoneCountry: string
+  purchase: NormalizedPurchase
 ): Promise<EnrichResult> {
   if (!trckUserId) return NOTHING
 
   const emailHash = hashEmail(purchase.buyerEmail)
-  const phoneHash = hashPhone(purchase.buyerPhone, defaultPhoneCountry)
+  const phoneHash = hashPhone(
+    purchase.buyerPhone,
+    obterPaisDaMoeda(purchase.currency)
+  )
   const firstNameHash = hashName(purchase.buyerFirstName)
   const lastNameHash = hashName(purchase.buyerLastName)
   // O CEP do checkout entra como PII pra valer: é o `zp` da CAPI, e é melhor

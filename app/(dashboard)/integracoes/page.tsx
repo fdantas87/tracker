@@ -1,5 +1,5 @@
 import type { Metadata } from "next"
-import { Bot, Plug, ShoppingBag, TriangleAlert, Webhook, Plus } from "lucide-react"
+import { TriangleAlert } from "lucide-react"
 
 import { pageTitle } from "@/lib/branding"
 import { getSettings, getStripeAccount, type StripeAccountRow } from "@/lib/settings/queries"
@@ -90,29 +90,7 @@ export default async function IntegrationsPage() {
 
           <PlatformManager stripeAccount={stripe.account} hasWebhookToken={hasWebhookToken} />
 
-          <IntegrationSection
-            title="Próximas integrações"
-            description="Ainda não construídas. Estão listadas para deixar claro o que esta tela vai reunir, e não para serem configuradas agora."
-          >
-            <IntegrationCard
-              name="Webhooks livres"
-              icon={Webhook}
-              status="em-breve"
-              description="Receber eventos de qualquer sistema, com mapeamento de campos configurável em vez de um adaptador em código."
-            />
-            <IntegrationCard
-              name="Ferramentas de automação"
-              icon={Plug}
-              status="em-breve"
-              description="Enviar visitantes, eventos e vendas para automações externas conforme eles acontecem."
-            />
-            <IntegrationCard
-              name="MCP"
-              icon={Bot}
-              status="em-breve"
-              description="Expor os dados do painel para agentes de IA consultarem direto, sem exportação manual."
-            />
-          </IntegrationSection>
+
         </TabsContent>
 
         <TabsContent value="webhook" className="mt-4">

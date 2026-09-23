@@ -1,5 +1,8 @@
+import { after } from "next/server"
+import { headers } from "next/headers"
 import { redirect } from "next/navigation"
 
+import { ensureCronDispatchConfigured } from "@/lib/settings/cron-autoconfig"
 import { createClient } from "@/lib/supabase/server"
 import { DashboardSidebar } from "@/components/dashboard-sidebar"
 import { ThemeToggle } from "@/components/theme-toggle"
@@ -24,6 +27,21 @@ export default async function DashboardLayout({
 
   if (!user) {
     redirect("/login")
+  }
+
+  // Autoconfiguração do pg_cron: o endereço que ele chama é sempre o domínio
+  // por onde o admin está acessando, então não há por que pedir isso a ninguém.
+  // O header é lido AQUI, antes do after(), para não depender de API dinâmica
+  // dentro do callback. O trabalho roda depois da resposta — zero latência no
+  // render — e só escreve quando algo difere do que já está salvo.
+  const hdrs = await headers()
+  const host = hdrs.get("x-forwarded-host") ?? hdrs.get("host")
+  if (host) {
+    const proto =
+      hdrs.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https")
+    after(async () => {
+      await ensureCronDispatchConfigured(`${proto}://${host}/api/cron/dispatch`).catch(() => {})
+    })
   }
 
   // Verificação de conexão com o banco (RLS)

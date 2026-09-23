@@ -13,10 +13,9 @@ import {
   checkRateLimit,
   rateLimitHeaders,
 } from "@/lib/rate-limit"
-import { getDispatchConfig } from "@/lib/settings/dispatch-config"
 import { createServiceClient } from "@/lib/supabase/service"
 import { parseJsonText } from "@/lib/validation"
-import { getAdapter } from "@/lib/webhooks/adapters"
+import { getAdapter, obterPaisDaMoeda } from "@/lib/webhooks/adapters"
 import {
   getStripeWebhookSecret,
   verifyStripeSignature,
@@ -148,12 +147,13 @@ export async function POST(
   }
 
   const purchase = parsed.purchase
+  // O país do telefone vem da moeda DESTA transação, não de um valor fixo do
+  // deploy: o mesmo cliente pode vender em BRL e em USD.
+  const phoneCountry = obterPaisDaMoeda(purchase.currency)
 
   try {
-    const config = await getDispatchConfig()
-
     // --- 3. vinculação com o visitante -------------------------------------
-    const match = await findVisitor(purchase, config.defaultPhoneCountry)
+    const match = await findVisitor(purchase, phoneCountry)
 
     // --- 4. gravação idempotente -------------------------------------------
     // `transaction_id` é UNIQUE. O upsert atualiza a linha quando a mesma
@@ -165,7 +165,7 @@ export async function POST(
         trck_user_id: match.visitor?.trck_user_id ?? null,
         email: purchase.buyerEmail,
         email_hash: hashEmail(purchase.buyerEmail),
-        phone_hash: hashPhone(purchase.buyerPhone, config.defaultPhoneCountry),
+        phone_hash: hashPhone(purchase.buyerPhone, phoneCountry),
         // Texto puro para a ficha do lead (fase 8b) — os hashes acima seguem
         // existindo só para o Meta, propósito diferente. Requer a migration
         // 20260919090000 aplicada ANTES do deploy, ou este upsert inteiro falha.
@@ -220,11 +220,7 @@ export async function POST(
       : null
 
     if (visitorId) {
-      const enrichment = await enrichVisitorFromPurchase(
-        visitorId,
-        purchase,
-        config.defaultPhoneCountry
-      )
+      const enrichment = await enrichVisitorFromPurchase(visitorId, purchase)
 
       if (enrichment.enriched) {
         after(() => flushAndDrain(visitorId))
@@ -317,7 +313,7 @@ type VisitorMatch = {
  */
 async function findVisitor(
   purchase: NormalizedPurchase,
-  defaultPhoneCountry: string
+  phoneCountry: string
 ): Promise<VisitorMatch> {
   const supabase = createServiceClient()
 
@@ -341,7 +337,7 @@ async function findVisitor(
     if (data && data.length > 0) return { visitor: data[0], method: "email" }
   }
 
-  const phoneHash = hashPhone(purchase.buyerPhone, defaultPhoneCountry)
+  const phoneHash = hashPhone(purchase.buyerPhone, phoneCountry)
   if (phoneHash) {
     const { data } = await supabase
       .from("visitors")

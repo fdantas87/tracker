@@ -11,20 +11,22 @@
 -- Supabase e rode uma vez. O editor executa tudo numa transação única, então
 -- ou o schema inteiro aplica, ou nada aplica — não existe meio-termo.
 --
--- 13 arquivos, na ordem de aplicação:
---   supabase/setup-preflight.sql                                      1eb5dba9
---   supabase/migrations/20260916140000_extensions.sql                 b4e4fd34
---   supabase/migrations/20260916140100_tables.sql                     245ec9a0
---   supabase/migrations/20260916140200_rls_policies.sql               46928e64
---   supabase/migrations/20260916140300_vault_functions.sql            060d4e7b
---   supabase/migrations/20260916140400_retention_job.sql              a437e8fd
---   supabase/migrations/20260917170000_rate_limits.sql                e5770c1d
---   supabase/migrations/20260917190000_event_queue.sql                d27b5837
---   supabase/migrations/20260918120000_geo_enriquecido.sql            97f6e13b
---   supabase/migrations/20260919090000_purchases_dados_comprador.sql  1fe77716
---   supabase/migrations/20260919120000_purchases_forma_pagamento.sql  e279ab08
---   supabase/migrations/20260921130000_stripe_integration.sql         4cae7404
---   supabase/migrations/20260922140000_allowed_origins.sql            448cba0a
+-- 15 arquivos, na ordem de aplicação:
+--   supabase/setup-preflight.sql                                         1eb5dba9
+--   supabase/migrations/20260916140000_extensions.sql                    b4e4fd34
+--   supabase/migrations/20260916140100_tables.sql                        245ec9a0
+--   supabase/migrations/20260916140200_rls_policies.sql                  46928e64
+--   supabase/migrations/20260916140300_vault_functions.sql               060d4e7b
+--   supabase/migrations/20260916140400_retention_job.sql                 a437e8fd
+--   supabase/migrations/20260917170000_rate_limits.sql                   e5770c1d
+--   supabase/migrations/20260917190000_event_queue.sql                   d27b5837
+--   supabase/migrations/20260918120000_geo_enriquecido.sql               97f6e13b
+--   supabase/migrations/20260919090000_purchases_dados_comprador.sql     1fe77716
+--   supabase/migrations/20260919120000_purchases_forma_pagamento.sql     e279ab08
+--   supabase/migrations/20260921130000_stripe_integration.sql            4cae7404
+--   supabase/migrations/20260922140000_allowed_origins.sql               448cba0a
+--   supabase/migrations/20260923120000_cron_health.sql                   44fb0bcd
+--   supabase/migrations/20260923130000_remove_default_phone_country.sql  d87fea19
 -- ============================================================================
 
 -- >>> supabase/setup-preflight.sql
@@ -1490,3 +1492,70 @@ create trigger set_updated_at before update on public.stripe_accounts
 
 alter table public.settings
   add column if not exists allowed_origins text[] not null default '{}';
+
+-- >>> supabase/migrations/20260923120000_cron_health.sql
+-- ============================================================================
+-- Saúde do cron de despacho (aditiva a fase 7.5)
+-- ============================================================================
+-- Cole no SQL Editor do Supabase e rode, como as migrations anteriores.
+--
+-- DIFERENTE DAS OUTRAS: esta é só leitura e só aditiva. Se você ainda não
+-- rodou, nada quebra — a tela de Eventos → aba Delay simplesmente não mostra
+-- o indicador de saúde do pg_cron ainda (a chamada RPC erra, e o código do
+-- painel trata isso como "sem registro", não como erro). Não há uma ordem
+-- obrigatória migration-antes-do-deploy aqui, ao contrário de
+-- 20260917190000_event_queue.sql e 20260918120000_geo_enriquecido.sql.
+--
+-- POR QUE ISTO EXISTE: `tick_event_queue()` roda a cada minuto mesmo quando
+-- não há evento vencido (só pula o `net.http_post` nesse caso) — então a
+-- última linha de `cron.job_run_details` para o job
+-- 'dispatch_event_queue_minutely' é um heartbeat honesto de "o pg_cron está
+-- vivo e agendado". Isso é diferente de `event_queue_depth()` (fase 7.5, que
+-- diz se o Meta está de fato recebendo os eventos) — os dois sinais juntos é
+-- que respondem "por que a fila não drena", sem precisar abrir o SQL Editor.
+-- ============================================================================
+
+create or replace function public.dispatch_cron_status()
+returns table (last_run_at timestamptz)
+language sql
+security definer
+stable
+set search_path = ''
+as $$
+  select jrd.start_time
+  from cron.job_run_details jrd
+  join cron.job j on j.jobid = jrd.jobid
+  where j.jobname = 'dispatch_event_queue_minutely'
+  order by jrd.start_time desc
+  limit 1;
+$$;
+
+revoke all on function public.dispatch_cron_status() from public;
+grant execute on function public.dispatch_cron_status() to service_role;
+
+-- >>> supabase/migrations/20260923130000_remove_default_phone_country.sql
+-- ============================================================================
+-- Remove settings.default_phone_country
+-- ============================================================================
+-- O país do telefone deixou de ser um campo do painel. Numa compra ele vem da
+-- moeda da transação (obterPaisDaMoeda, lib/webhooks/adapters/index.ts); sem
+-- compra (/api/identify), da env var TRACKING_DEFAULT_PHONE_COUNTRY
+-- (lib/phone-country.ts), uma por deploy.
+--
+-- Nenhuma policy, trigger ou default de outra coluna depende desta: a RLS de
+-- settings é por tabela e o set_updated_at não olha colunas. O único objeto
+-- ligado a ela é o CHECK settings_phone_country_check, que só referencia esta
+-- coluna. Ele cairia junto com o DROP COLUMN; sai explicitamente antes só para
+-- a intenção ficar escrita.
+--
+-- ORDEM: deploy do código novo PRIMEIRO, esta migration DEPOIS. O código
+-- antigo ainda seleciona e grava a coluna; com ela removida, salvar a aba Delay
+-- falha e getDispatchConfig() cai no padrão (perde modo, janela e
+-- test_event_code) até o deploy sair.
+-- ============================================================================
+
+alter table public.settings
+  drop constraint if exists settings_phone_country_check;
+
+alter table public.settings
+  drop column if exists default_phone_country;

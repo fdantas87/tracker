@@ -106,7 +106,7 @@ const BASE = settings.dispatch_cron_url
 if (!BASE) {
   erro(
     "Nao da pra saber qual e a URL deste tracker.",
-    'Preencha "URL do cron" no painel (aba Disparo) ou rode com TRACKING_BASE_URL=https://tracking.seudominio.com'
+    "Faca login no painel (qualquer pagina) pelo dominio de producao: o endereco se registra sozinho. Ou rode com TRACKING_BASE_URL=https://tracking.seudominio.com"
   )
   encerrar()
 }
@@ -147,7 +147,7 @@ if (temCodigoNovo) {
   } else if (res.status === 503) {
     erro(
       "O endpoint respondeu 503: nao ha token do cron gravado.",
-      'No painel, aba Disparo, clique em "Gerar token do cron".'
+      "Faca login no painel (qualquer pagina): o token e gerado sozinho no carregamento."
     )
   } else {
     console.log(`  [?] /api/cron/dispatch respondeu ${res.status} (esperado 401).`)
@@ -164,7 +164,7 @@ if (settings.dispatch_cron_url) {
 } else {
   erro(
     "A URL do cron esta VAZIA, entao ninguem drena a fila.",
-    'No painel (aba Disparo), preencha "URL do cron" com https://<seu-dominio>/api/cron/dispatch e clique em Salvar. Faca isso DEPOIS do deploy.'
+    "Faca login no painel (qualquer pagina) pelo dominio de producao, DEPOIS do deploy: o endereco se registra sozinho."
   )
 }
 
@@ -173,7 +173,7 @@ if (settings.dispatch_cron_token_vault_id) {
 } else {
   erro(
     "Nao existe token do cron.",
-    'No painel, aba Disparo, clique em "Gerar token do cron".'
+    "Faca login no painel (qualquer pagina): o token e gerado sozinho no carregamento."
   )
 }
 

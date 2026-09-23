@@ -6,12 +6,12 @@ import { jsonResponse, preflightResponse } from "@/lib/cors"
 import { drainEventQueue } from "@/lib/dispatch/event-dispatch"
 import { getGeo, toInetOrNull } from "@/lib/geo"
 import { hashEmail, hashName, hashPhone } from "@/lib/crypto/hash"
+import { DEFAULT_PHONE_COUNTRY } from "@/lib/phone-country"
 import {
   CAPTURE_RULE,
   checkRateLimit,
   rateLimitHeaders,
 } from "@/lib/rate-limit"
-import { getDispatchConfig } from "@/lib/settings/dispatch-config"
 import { createServiceClient } from "@/lib/supabase/service"
 import {
   LIMITS,
@@ -87,14 +87,15 @@ export async function POST(request: Request) {
   // (a esmagadora maioria das chamadas) não traz nada e não dispara nada.
   const hasPii = Boolean(email || phone || firstName || lastName)
 
-  const config = await getDispatchConfig()
   const utms = cleanUtms(body)
 
   const row = {
     trck_user_id: trckUserId,
     email,
     email_hash: hashEmail(email),
-    phone_hash: hashPhone(phone, config.defaultPhoneCountry),
+    // Aqui não há compra, logo não há moeda: vale o país padrão do deploy. A
+    // geolocalização do visitante fica de fora de propósito (viagem, VPN).
+    phone_hash: hashPhone(phone, DEFAULT_PHONE_COUNTRY),
     first_name_hash: hashName(firstName),
     last_name_hash: hashName(lastName),
     fbp: cleanString(body.fbp, LIMITS.id),

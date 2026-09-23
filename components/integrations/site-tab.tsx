@@ -31,7 +31,7 @@ export function SiteTab({ settings }: { settings: SettingsRow | null }) {
     <div className="flex flex-col gap-4">
       <InstallationSection />
       {settings ? (
-        <div className="grid grid-cols-1 gap-4 xl:grid-cols-4 items-stretch">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-4 items-start">
           <AllowedOriginsSection settings={settings} />
           <CurrencyForm settings={settings} />
           <TestCodeForm settings={settings} />
@@ -88,19 +88,19 @@ function CurrencyForm({ settings }: { settings: SettingsRow }) {
   const formRef = React.useRef<HTMLFormElement>(null)
 
   return (
-    <form ref={formRef} action={formAction} className="relative flex h-full flex-col items-center justify-between overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-6 text-center sm:p-8 shadow-sm">
+    <form ref={formRef} action={formAction} className="relative flex flex-col items-center overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-6 text-center sm:p-8 shadow-sm min-h-[340px]">
       <div className="pointer-events-none absolute -top-24 left-1/2 h-48 w-full max-w-md -translate-x-1/2 rounded-full bg-primary/15 opacity-50 blur-3xl" />
       
       <div className="relative z-10 flex w-full flex-col items-center gap-6 flex-1">
         <div className="flex flex-col items-center gap-2">
           <Settings2 className="size-6 text-primary" />
           <h2 className="text-xl font-semibold tracking-tight">Moeda padrão</h2>
-          <p className="text-[13px] text-muted-foreground text-balance">
+          <p className="text-[13px] text-muted-foreground text-balance min-h-[40px]">
             Moeda usada no cálculo de receita dos eventos.
           </p>
         </div>
 
-        <div className="flex w-full flex-col gap-4 mt-auto">
+        <div className="flex w-full flex-col gap-4">
           <input type="hidden" name="test_event_code" value={settings.testEventCode ?? ""} />
           <Select 
             name="currency" 
@@ -139,19 +139,19 @@ function TestCodeForm({ settings }: { settings: SettingsRow }) {
   )
 
   return (
-    <form action={formAction} className="relative flex h-full flex-col items-center justify-between overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-6 text-center sm:p-8 shadow-sm">
+    <form action={formAction} className="relative flex flex-col items-center overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-6 text-center sm:p-8 shadow-sm min-h-[380px]">
       <div className="pointer-events-none absolute -top-24 left-1/2 h-48 w-full max-w-md -translate-x-1/2 rounded-full bg-primary/15 opacity-50 blur-3xl" />
       
       <div className="relative z-10 flex w-full flex-col items-center gap-6 flex-1">
         <div className="flex flex-col items-center gap-2">
           <Webhook className="size-6 text-primary" />
           <h2 className="text-xl font-semibold tracking-tight">Código de teste</h2>
-          <p className="text-[13px] text-muted-foreground text-balance">
+          <p className="text-[13px] text-muted-foreground text-balance min-h-[40px]">
             Encontrado no Events Manager (Opcional).
           </p>
         </div>
 
-        <div className="flex w-full flex-col gap-4 mt-auto">
+        <div className="flex w-full flex-col gap-4">
           <input type="hidden" name="currency" value={settings.currency} />
           <Input
             name="test_event_code"
@@ -183,19 +183,19 @@ function FormCaptureSection({ settings }: { settings: SettingsRow }) {
   const formRef = React.useRef<HTMLFormElement>(null)
 
   return (
-    <form ref={formRef} action={formAction} className="relative flex h-full flex-col items-center justify-between overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-6 text-center sm:p-8 shadow-sm">
+    <form ref={formRef} action={formAction} className="relative flex flex-col items-center overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-6 text-center sm:p-8 shadow-sm min-h-[340px]">
       <div className="pointer-events-none absolute -top-24 left-1/2 h-48 w-full max-w-md -translate-x-1/2 rounded-full bg-primary/15 opacity-50 blur-3xl" />
       
       <div className="relative z-10 flex w-full flex-col items-center gap-6 flex-1">
         <div className="flex flex-col items-center gap-2">
           <FormInput className="size-6 text-primary" />
           <h2 className="text-xl font-semibold tracking-tight">Capturar formulários</h2>
-          <p className="text-[13px] text-muted-foreground text-balance">
+          <p className="text-[13px] text-muted-foreground text-balance min-h-[40px]">
             Lê email, telefone e nome. Ignora senhas e cartões.
           </p>
         </div>
 
-        <div className="flex w-full flex-col gap-4 mt-auto">
+        <div className="flex w-full flex-col gap-4">
           <div className="flex items-center justify-between gap-4 w-full rounded-2xl border border-primary/20 bg-background/80 p-5 shadow-sm backdrop-blur h-14">
             <Label htmlFor="form_capture_enabled" className="text-[14px] font-semibold cursor-pointer">
               Ativar leitura

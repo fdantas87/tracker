@@ -31,7 +31,6 @@ export type SettingsRow = {
   dispatchDelaySeconds: number
   dispatchImmediateEvents: string[]
   formCaptureEnabled: boolean
-  defaultPhoneCountry: string
   dispatchCronUrl: string | null
   hasCronToken: boolean
   // Origens CORS editáveis no painel (Configurações → Geral)
@@ -54,6 +53,18 @@ export type QueueDepth = {
   /** Desistimos depois de 5 tentativas. */
   failed: number
 }
+
+export type CronStatus = {
+  /** Última vez que `tick_event_queue()` rodou, segundo `cron.job_run_details`. */
+  lastRunAt: string | null
+  /** `lastRunAt` dentro da janela de tolerância — cron vivo e agendado. */
+  ok: boolean
+  /** Carimbo do servidor no momento da consulta, pro cliente nunca chamar Date.now() no render. */
+  agoraMs: number
+}
+
+/** O cron roda a cada 60s; folga de ~2 tiques e meio evita falso alarme por variação de rede. */
+const CRON_HEALTHY_WINDOW_MS = 150_000
 
 export async function listAccounts(kind: AccountKind): Promise<AccountRow[]> {
   const config = ACCOUNT_CONFIG[kind]
@@ -111,7 +122,6 @@ export async function getSettings(): Promise<SettingsRow | null> {
       ? (data.dispatch_immediate_events as string[])
       : [],
     formCaptureEnabled: Boolean(data.form_capture_enabled),
-    defaultPhoneCountry: String(data.default_phone_country ?? "55"),
     dispatchCronUrl: data.dispatch_cron_url ?? null,
     // Mesma regra do token do webhook: informa que existe, nunca o valor.
     hasCronToken: Boolean(data.dispatch_cron_token_vault_id),
@@ -170,4 +180,32 @@ export async function getQueueDepth(): Promise<QueueDepth | null> {
     due: Number(row.due ?? 0),
     failed: Number(row.failed ?? 0),
   }
+}
+
+/**
+ * Saúde do pg_cron que drena a fila.
+ *
+ * Diferente de `getQueueDepth()`: aquele diz se o Meta está recebendo os
+ * eventos, este diz se o próprio pg_cron está vivo e chamando o endpoint —
+ * `tick_event_queue()` roda a cada minuto mesmo sem trabalho a fazer.
+ *
+ * Migration aditiva (`20260923120000_cron_health.sql`) — se ainda não foi
+ * rodada no cliente, a RPC erra e aqui devolvemos "sem registro" em vez de
+ * derrubar a tela. Não existe estado de erro para o chamador: ausência de
+ * dado É o estado a mostrar.
+ */
+export async function getCronStatus(): Promise<CronStatus> {
+  const agoraMs = Date.now()
+  const supabase = createServiceClient()
+  const { data, error } = await supabase.rpc("dispatch_cron_status")
+
+  if (error) return { lastRunAt: null, ok: false, agoraMs }
+
+  const row = Array.isArray(data) ? data[0] : data
+  const lastRunAt = row?.last_run_at ? String(row.last_run_at) : null
+  const ok = lastRunAt !== null
+    ? agoraMs - new Date(lastRunAt).getTime() < CRON_HEALTHY_WINDOW_MS
+    : false
+
+  return { lastRunAt, ok, agoraMs }
 }

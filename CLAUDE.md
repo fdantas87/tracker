@@ -72,6 +72,7 @@ apps/tracking.negou.net/
 │   ├── dispatch/visitor-enrich.ts          # ✅ fase 7.5 — PII da compra -> visitors, e libera a fila
 │   ├── settings/dispatch-modes.ts          # ✅ fase 7.5 — modos e rótulos (módulo comum)
 │   ├── settings/dispatch-config.ts         # ✅ fase 7.5 — config memorizada + regra do atraso
+│   ├── settings/cron-autoconfig.ts         # ✅ URL + token do cron sozinhos, chamado pelo layout
 │   ├── dashboard/filters.ts                # ✅ fase 8a — constantes dos filtros (SEM server-only)
 │   ├── dashboard/events.ts                 # ✅ fase 8a — consultas da tela de Eventos (sob RLS)
 │   ├── dashboard/vendas-filters.ts         # ✅ fase 8b — filtros de Vendas (SEM server-only)
@@ -82,6 +83,7 @@ apps/tracking.negou.net/
 │   ├── dashboard/geo-fit.ts                # ✅ fase 8c — enquadramento automático (SEM server-only, roda no cliente)
 │   ├── dashboard/geo.ts                    # ✅ fase 8c — pontos, rankings e receita por região (sob RLS)
 │   ├── geo.ts                              # ✅ fase 5 — IP real + os 8 headers x-vercel-ip-*
+│   ├── phone-country.ts                    # ✅ país padrão do telefone (TRACKING_DEFAULT_PHONE_COUNTRY)
 │   ├── rate-limit.ts                       # ✅ fase 5 — Upstash quando configurado, memória senão
 │   ├── cors.ts                             # ✅ fase 5 — allowlist exata dos endpoints públicos
 │   ├── validation.ts                       # ✅ fase 5 — limpeza de tudo que entra
@@ -120,6 +122,7 @@ apps/tracking.negou.net/
     │                                        #    revisão geo — geo_enriquecido (8 colunas + fill_visitor_pii)
     │                                        #    fase 8b — purchases_dados_comprador, purchases_forma_pagamento
     │                                        #    Stripe — stripe_integration (platform CHECK + stripe_accounts)
+    │                                        #    remove_default_phone_country (país do telefone saiu do banco)
     ├── setup-preflight.sql                  # ✅ deploy 1-clique — checa Vault e banco já instalado
     ├── setup.sql                            # ✅ deploy 1-clique — GERADO, não editar (npm run build:setup-sql)
     ├── verify_phase2.sql                    # ✅ fase 2 — queries de verificação (roda manual, não é migration)
@@ -259,12 +262,52 @@ No instante do PageView o sistema só conhece cookie, IP e geo. Email, nome e te
 - **Quem acorda a fila é o pg_cron + pg_net**, chamando `/api/cron/dispatch` de minuto em minuto. Nenhum serviço novo — mesma decisão que tirou o Redis do rate limit. O cron da Vercel exigiria um `vercel.json` (que o projeto não tem) e, no Hobby, roda 1x por dia.
 - **O endpoint responde 202 ANTES de trabalhar**, e faz o envio no `after()`. O pg_net é fire-and-forget e derruba a conexão no timeout dele; o `after()` é o que mantém a função viva ("`after` will run for the platform's default or configured max duration of your route").
 - **O token do cron vive só no Vault.** O pg_cron lê o valor bruto com `reveal_secret` pra mandar no header; o endpoint compara em tempo constante. Uma representação, uma fonte de verdade — trocar o token no painel vale no próximo tique, sem editar SQL.
+- **Não existe passo de ativação (2026-09-23).** URL e token do cron se
+  configuram sozinhos: `app/(dashboard)/layout.tsx` lê o header `Host` de toda
+  página autenticada e agenda, num `after()`, `ensureCronDispatchConfigured()`
+  (`lib/settings/cron-autoconfig.ts`), que grava `dispatch_cron_url` quando ele
+  difere do domínio atual e gera o token quando ainda não existe. Na maioria
+  das requisições isso é um `select` e nada mais. Consequências que valem
+  guardar:
+  - **O domínio registrado é o último pelo qual um admin acessou o painel.**
+    Trocar de `*.vercel.app` para o domínio próprio se corrige no primeiro
+    acesso pelo domínio novo. O lado ruim: um admin abrindo o painel por uma URL
+    de **preview** faz o cron de produção apontar para o preview. O banco é o
+    mesmo e o endpoint do preview também drena, então nada se perde — mas o
+    próximo acesso pela produção é que devolve a URL para lá.
+  - **O `Host` é lido ANTES do `after()`**, não dentro dele. Não há precedente
+    no projeto de API dinâmica (`headers()`/`cookies()`) dentro do callback, e
+    ler antes elimina a dúvida.
+  - **O token do cron nunca aparece na tela.** Diferente do `webhook_token`
+    (colado na plataforma de pagamento), ninguém precisa copiá-lo: só
+    `tick_event_queue()` o lê, via `reveal_secret`. `regenerateCronToken`
+    continua existindo, atrás de "Avançado", só para girá-lo de propósito.
+  - **`saveDispatchSettings` não toca em `dispatch_cron_url`.** Se voltasse a
+    gravar a coluna a partir do formulário, apagaria a URL a cada salvamento —
+    o campo não existe mais na tela.
+  - **Indicador de saúde:** `dispatch_cron_status()` (migration
+    `20260923120000_cron_health.sql`, lida por `getCronStatus()`) devolve a
+    última linha de `cron.job_run_details` do job
+    `dispatch_event_queue_minutely`. É um heartbeat honesto de "o pg_cron está
+    vivo", porque `tick_event_queue()` roda todo minuto mesmo sem trabalho —
+    diferente de `event_queue_depth()`, que diz se o Meta está recebendo.
+    Migration aditiva e só-leitura: sem ela, a RPC erra e a tela mostra "sem
+    registro" em vez de quebrar, então aqui a ordem migration→deploy é
+    recomendada, não obrigatória.
 - **Liberação antecipada:** quando a conversão grava a PII (webhook de compra ou `/api/identify` com dado pessoal), `flush_visitor_events` adianta a fila daquele visitante. Quem converte não espera a janela inteira.
 - **O enriquecimento do webhook roda ANTES do retorno de status não-aprovado.** Um boleto/Pix apenas gerado já traz o email do comprador, e é essa PII que os eventos na fila estão esperando — dias antes de a venda ser aprovada. Sair cedo ali desperdiçaria o melhor momento do funil.
 - **`fill_visitor_pii` só preenche buraco, nunca sobrescreve.** O visitante pode ter um valor melhor (digitado pela própria pessoa); o webhook é fonte de segunda mão. É o inverso do `/api/identify`, onde o valor mais novo deve ganhar. A função devolve o que preencheu, então a mesma ida ao banco responde "vale liberar a fila?".
   - **Em PL/pgSQL, use `array_append(arr, 'x')` e não `arr || 'x'`.** Com um literal sem tipo o `||` é ambíguo entre concatenar dois arrays e anexar um elemento, e o Postgres tenta interpretar `'x'` como um `text[]` inteiro — `malformed array literal`. Aconteceu de verdade aqui: a migration aplicou sem reclamar (o corpo de uma função PL/pgSQL só é analisado na execução) e o erro só apareceu quando o `verify_phase7_5.sql` chamou a função.
 - **`identified` NÃO pode sair do `/api/config/public`.** Aquele endpoint responde com `Cache-Control: public, max-age=60` — um CDN serviria o estado de um visitante pra todos os outros. Ele viaja na resposta do `/api/identify`, que é `no-store`.
 - **BUG CORRIGIDO: o `hashPhone` não punha o código do país.** O comentário dizia "com código do país", o código só tirava não-dígitos e zeros à esquerda. Um celular digitado como `(11) 98765-4321` virava `11987654321` e nunca batia com o `5511987654321` que o Meta espera — sem erro nenhum, só correspondência zero. Agora há `normalizePhone(valor, país)`: 10 ou 11 dígitos = nacional e recebe o país (o que resolve até o DDD 55 de Santa Maria/RS); 12 ou 13 já começando com o país ficam como estão. **Todo `phone_hash` gravado antes disso é inútil pro Meta** — não há como recuperá-los, mas o volume era de desenvolvimento.
+- **O país do telefone vem da moeda da transação, não de um campo do painel (2026-09-23).** Antes era `settings.default_phone_country`, um DDI fixo por deploy digitado na aba Delay. Isso quebrava o cliente que vende em mais de uma moeda: o comprador americano de uma venda Stripe em USD ganhava o prefixo 55 e nunca casava no Meta. Agora:
+  - **Numa compra** (webhook, `enrichVisitorFromPurchase`, `dispatchPurchase`), o país é `obterPaisDaMoeda(purchase.currency)` (`lib/webhooks/adapters/index.ts`): BRL → BR, USD → US, EUR → PT. A moeda é o sinal confiável que o webhook traz. A geolocalização do visitante **nunca** entra nisso — ela erra com viagem e VPN, e continua sendo usada só para `ct`/`st`/`zp`/`country`.
+  - **EUR → PT é aproximação**: o euro circula em ~20 países. Quando alguma plataforma passar a mandar o país do comprador, ele deve ter precedência sobre a moeda.
+  - **Sem compra** (`/api/identify` — formulários e `negou.identify()`), não há moeda: vale `TRACKING_DEFAULT_PHONE_COUNTRY` (`lib/phone-country.ts`), uma env var por deploy, ISO-2, padrão `BR`. Moeda ausente ou não mapeada também cai nela, com `console.warn`.
+  - **Por que o fallback não é simplesmente "BR" chumbado:** o tracker já atende clientes de países diferentes, e o `phone_hash` do `/api/identify` é o que TODO evento de navegador manda pro Meta. Um "BR" fixo zeraria a correspondência de telefone de todo deploy fora do Brasil, sem erro nenhum — exatamente o defeito que o campo antigo existia para evitar. A configurabilidade saiu do banco e da tela, não deixou de existir.
+  - **`normalizePhone(telefone, país)` recebe ISO-2, não mais o código de discagem.** O parâmetro antigo era `"55"`; passar `"BR"` para a versão antiga tiraria os não-dígitos, ficaria vazio e devolveria o número **sem prefixo nenhum**. Por isso `DIAL_PLANS` em `lib/crypto/hash.ts` guarda, por país, o código E.164 **e os tamanhos do número nacional**. O tamanho importa: a regra antiga ("10 ou 11 dígitos = nacional") é brasileira, e aplicada a um americano que digitou `1 555 123 4567` (11 dígitos) prefixaria duas vezes. País fora da tabela cai no plano do país padrão, com aviso no log — nunca sem prefixo. Adicionar um país é uma linha.
+  - **Telefone digitado com `+` vale como veio**, inclusive de um país diferente do da moeda (americano pagando em BRL). Fora isso, **para o Brasil o resultado é idêntico ao anterior** — conferido em 200 mil entradas aleatórias contra a versão antiga.
+  - **Hashes de telefone gravados antes desta mudança não são recalculados.** Os de `visitors` não têm como (só o hash é guardado); os de `purchases` teriam, a partir de `buyer_phone`, mas não vale a migration: para BR o hash é o mesmo, e o volume fora do Brasil era de desenvolvimento.
 - **BUG CORRIGIDO: o `ga_client_id` nunca era capturado na primeira visita.** O cookie `_ga` só nasce depois que o `gtag.js` baixa e executa — sempre DEPOIS do primeiro `/api/identify`. O `_fbp` tinha tratamento pra isso (`ensureFbp()`), o `_ga` não tinha. Resultado: todo visitante de primeira viagem ficava com `ga_client_id` e `ga_session_id` nulos, e a compra do webhook, que reusa esse id pra cair na sessão certa, virava tráfego direto órfão no GA4 — justamente no caso mais comum, visita/checkout/compra na mesma sessão. Agora `backfillGaClientId()` usa `gtag('get', id, 'client_id', cb)`, a API oficial, que enfileira o callback até o script estar pronto (sem polling nem palpite de timing), e manda um identify complementar só quando o id aparece. Como o `/api/identify` não apaga campo nulo, repetir é seguro. Detectado no primeiro visitante real da LP, em 2026-09-18.
 - **Captura de formulário:** o caminho principal é o site chamar `negou.identify({...})`. O farejador de `submit`/clique é a rede de segurança. A **lista de proibições vem primeiro e é definitiva**: `type=password`, `hidden`, `file`, `autocomplete^="cc-"`, qualquer nome batendo senha/cartão/CVV/CPF/código, valor que passa no Luhn com 13-19 dígitos, e `data-negou-ignore`. Formulário que contém campo de senha é ignorado **por inteiro** (é tela de login: nada a ganhar, tudo a perder), e o mesmo vale pra formulário cujo `action` aponta pro checkout. Email é conferido antes de telefone, pra um campo chamado "email" com dígitos nunca ser lido como telefone.
 - **O `_fbp` é gerado por nós quando não existe**, antes de carregar o `fbevents.js`. Com o `fbq('track')` suprimido não dá pra contar que o script do Meta grave o cookie, e quem bloqueia o `fbevents` por extensão nunca teria `_fbp` nenhum. Gravar **antes** é o que evita o pior caso: o fbevents acha o cookie pronto e reaproveita, em vez de criar um segundo valor — dois `_fbp` pro mesmo navegador derrubariam a correspondência.
@@ -765,6 +808,11 @@ variáveis em `.env.example`.
   `.catch(function () {})`. Zero eventos, zero aviso. Continua sendo comparação
   por igualdade exata — **nunca** `endsWith`, pelo motivo já documentado no
   arquivo. A própria URL de produção do projeto entra sozinha na lista.
+- **`TRACKING_DEFAULT_PHONE_COUNTRY` é o país (ISO-2) do telefone quando não há
+  compra** para derivá-lo da moeda — ver "Disparo atrasado". Padrão `BR`; cliente
+  fora do Brasil **precisa** preencher, porque errar não dá erro, só zera a
+  correspondência de telefone no Meta. Entra no wizard do botão com
+  `envDefaults` = `BR`. É `const` de topo de módulo: mudar exige novo deploy.
 - **O nome do painel vem de `lib/branding.ts`**, não de string literal em nove
   `page.tsx`. `APP_NAME` vai no `<title>`; `BRAND_NAME` é o wordmark da sidebar
   e do login e cai para o `APP_NAME` quando não configurado. Os defaults são
@@ -1034,7 +1082,8 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
   conferir a venda na tela de Vendas — é a única forma de provar que o signing
   secret está certo, porque nenhuma API confirma isso antes.
 - **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase. *(Obsoleto para clientes novos: o botão do README faz isso. Ver "Deploy 1-clique".)*
-- **Deploy 1-clique — o que falta, e é só do usuário:** (1) **revogar o PAT do GitHub** que está em texto puro na URL do remote em `.git/config` e reconfigurar sem credencial; (2) rodar o `supabase/setup.sql` num projeto Supabase **novo**, do zero, e conferir com `verify_phase2.sql` — é o gate: não publicar um botão que aponta para um SQL não testado; (3) tornar o repo `fdantas87/tracker` público (o botão exige repo público) depois de decidir sobre `CLAUDE.md` e `implementation_plan.md`; (4) abrir a URL do botão uma vez e conferir que os 6 campos aparecem com os 2 defaults preenchidos.
+- **Deploy 1-clique — o que falta, e é só do usuário:** (1) **revogar o PAT do GitHub** que está em texto puro na URL do remote em `.git/config` e reconfigurar sem credencial; (2) rodar o `supabase/setup.sql` num projeto Supabase **novo**, do zero, e conferir com `verify_phase2.sql` — é o gate: não publicar um botão que aponta para um SQL não testado; (3) tornar o repo `fdantas87/tracker` público (o botão exige repo público) depois de decidir sobre `CLAUDE.md` e `implementation_plan.md`; (4) abrir a URL do botão uma vez e conferir que os 7 campos aparecem com os 3 defaults preenchidos.
+- **País do telefone pela moeda — o que falta:** (1) publicar o código; (2) **só depois** rodar `20260923130000_remove_default_phone_country.sql` no SQL Editor — ordem inversa da habitual, porque o código antigo ainda lê e grava a coluna (salvar a aba Delay falharia e `getDispatchConfig()` cairia no padrão, perdendo modo, janela e `test_event_code`); (3) em cada deploy de cliente **fora do Brasil**, preencher `TRACKING_DEFAULT_PHONE_COUNTRY` na Vercel e redeployar.
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
 
 ---
@@ -1091,6 +1140,68 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-09-23:** O país do telefone passou a vir da moeda da transação. O
+  campo "Código do país" da aba Delay e a coluna `settings.default_phone_country`
+  saíram; `obterPaisDaMoeda()` (`lib/webhooks/adapters/index.ts`) decide o país
+  nas 3 chamadas que nascem de uma compra, e `TRACKING_DEFAULT_PHONE_COUNTRY`
+  (`lib/phone-country.ts`, env var nova) cobre o `/api/identify`, que não tem
+  moeda. Migration `20260923130000_remove_default_phone_country.sql`.
+  - **O pedido original partia de duas premissas que não batiam com o código:**
+    o campo se chamava `default_phone_country`, não `country_code`, e guardava o
+    código de discagem (`"55"`), não um ISO-2. Passar o `"BR"` de
+    `obterPaisDaMoeda` para o `normalizePhone` antigo produziria número **sem
+    prefixo**, em silêncio. Daí a troca de assinatura e o `DIAL_PLANS`.
+  - **O plano inicial chumbava `"BR"` no `/api/identify`, e o usuário barrou**:
+    já há clientes de vários países, e o hash desse endpoint é o que todo evento
+    de navegador manda pro Meta. A flexibilidade saiu do banco, foi para o
+    ambiente, e não deixou de existir.
+  - **Defeito que teria entrado junto e foi pego no desenho:** a regra de
+    tamanho do `normalizePhone` era brasileira ("10 ou 11 dígitos = nacional").
+    Com o país vindo da moeda, um americano com `1 555 123 4567` (11 dígitos)
+    viraria `115551234567`. O tamanho nacional agora é por país.
+  - Achados de passagem: além de `visitor-enrich.ts`, havia mais 3 chamadas
+    lendo o DDI do painel (2 no webhook, 1 no `purchase-dispatch.ts`), e o
+    `getDispatchConfig()` do webhook e do `/api/identify` só existia para ler
+    esse campo — os dois saíram. `verify-dispatch.mjs` não o referenciava.
+  - Verificado: `check:actions` e `check:setup-sql` OK; lint limpo nos 12
+    arquivos tocados; `tsc` sem nenhum erro nesses arquivos (os 6 que restam
+    são de `overview-dashboard.tsx` e `platform-manager.tsx`, do commit
+    `fb59e52`, anteriores a esta mudança); **59/59 num teste de mesa** contra o
+    código real (os 3 mapeamentos de moeda, moeda nula/vazia/desconhecida
+    caindo no padrão com aviso, BR/US/PT com e sem prefixo, DDD 55, `+`
+    explícito de outro país, ISO sem plano, hash igual a um SHA-256 conhecido,
+    adaptadores reais do PerfectPay em BRL/USD e do Stripe em BRL/USD/EUR, e a
+    env var válida, inválida e ausente); e **200.000/200.000 entradas idênticas**
+    à versão anterior para o Brasil.
+  - **Não verificado por aqui:** a migration não foi aplicada (regra do
+    projeto) e nada rodou contra o banco — o caminho webhook → `phone_hash`
+    gravado depende do deploy.
+- **2026-09-23:** O cron de disparo deixou de ter passo de ativação. Antes eram
+  4 passos manuais na aba Delay: copiar o endereço mostrado, colar no campo "URL
+  do cron", salvar e clicar em "Gerar token do cron". Nada disso exigia decisão
+  humana — o endereço é sempre o domínio do próprio painel e o token só é lido
+  pelo `tick_event_queue()` — então virou autoconfiguração: o layout do painel
+  lê o `Host` e, num `after()`, `ensureCronDispatchConfigured()` grava URL e
+  token quando faltam ou divergem. Em deploy novo, o primeiro login (qualquer
+  tela) já deixa a fila drenando. O operador só escolhe modo e janela.
+  - Houve uma versão intermediária no mesmo dia, com um botão "Ativar disparo
+    automático" que ainda mostrava endereço e token. Foi descartada a pedido do
+    usuário: o botão continuava obrigando alguém a saber que aquilo existia.
+  - **O token do cron deixou de ser mostrado na tela**, inclusive ao girar.
+    Ele nunca teve para onde ser colado; revelá-lo era só superfície a mais.
+  - Nova migration aditiva `20260923120000_cron_health.sql` +
+    `getCronStatus()`: indicador "pg_cron chamou este endereço há Xs" lendo
+    `cron.job_run_details`. Antes, isso só se confirmava no SQL Editor.
+  - Dois bugs corrigidos de passagem: `saveDispatchSettings` gravava
+    `dispatch_cron_url` a partir do formulário e passaria a apagá-la quando o
+    campo saísse da tela; e ela e `regenerateCronToken` faziam
+    `revalidatePath("/pixels")`, mas quem mostra esses dados é `/eventos` —
+    sobra do refactor que moveu a aba Delay, e salvar não atualizava a tela.
+  - Verificado por aqui: `tsc` sem erro novo, lint limpo e `check:actions` e
+    `check:setup-sql` OK. **Não verificado:** o `after()` num Server Component
+    (primeiro uso no projeto) e o `Host` atrás do proxy da Vercel — isso só se
+    prova depois do deploy, vendo `dispatch_cron_url` preenchido sozinho após um
+    login e o chip da aba Delay ficando verde no minuto seguinte.
 - **2026-09-22:** Allowlist de domínios editável no painel. Nova coluna
   `allowed_origins` em `settings` (tipo `text[]`), editável em Configurações →
   Geral, com UI `components/settings/allowed-origins-section.tsx` (novo), Server

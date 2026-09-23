@@ -33,7 +33,7 @@ export async function getDispatchConfig(): Promise<DispatchConfig> {
     const { data } = await supabase
       .from("settings")
       .select(
-        "dispatch_mode, dispatch_delay_seconds, dispatch_immediate_events, form_capture_enabled, default_phone_country, test_event_code"
+        "dispatch_mode, dispatch_delay_seconds, dispatch_immediate_events, form_capture_enabled, test_event_code"
       )
       .eq("id", true)
       .maybeSingle()
@@ -48,7 +48,6 @@ export async function getDispatchConfig(): Promise<DispatchConfig> {
             ? (data.dispatch_immediate_events as string[])
             : [],
           formCaptureEnabled: Boolean(data.form_capture_enabled),
-          defaultPhoneCountry: String(data.default_phone_country ?? "55"),
           testEventCode: data.test_event_code ?? null,
         }
       : DEFAULT_DISPATCH_CONFIG

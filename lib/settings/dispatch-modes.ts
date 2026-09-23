@@ -14,7 +14,6 @@ export type DispatchConfig = {
   delaySeconds: number
   immediateEvents: string[]
   formCaptureEnabled: boolean
-  defaultPhoneCountry: string
   testEventCode: string | null
 }
 
@@ -27,7 +26,6 @@ export const DEFAULT_DISPATCH_CONFIG: DispatchConfig = {
   delaySeconds: 900,
   immediateEvents: [],
   formCaptureEnabled: true,
-  defaultPhoneCountry: "55",
   testEventCode: null,
 }
 

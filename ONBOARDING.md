@@ -81,6 +81,7 @@ deploy.
 | `TRACKING_ALLOWED_ORIGINS` | todo site onde o track.js será instalado |
 | `NEXT_PUBLIC_APP_NAME` | ex.: `Cliente A Tracking` |
 | `NEXT_PUBLIC_BRAND_NAME` | ex.: `Cliente A` |
+| `TRACKING_DEFAULT_PHONE_COUNTRY` | ISO-2 do país do cliente — `BR`, `US`, `PT`... (vem `BR`) |
 
 `TRACKING_ALLOWED_ORIGINS` é separada por vírgula, com esquema e sem barra final:
 
@@ -95,9 +96,16 @@ https://cliente-a.com.br,https://www.cliente-a.com.br,https://lp.cliente-a.com.b
 > Mudar o valor depois **só vale com um novo deploy**: a allowlist é um `const`
 > de topo de módulo, resolvido no cold start.
 
-As duas últimas variáveis já vêm preenchidas com `Tracking` no formulário —
-troque pelo nome do cliente. O nome do cabeçalho do painel ainda pode ser
-corrigido no passo 5, sem redeploy; o do `<title>` não.
+`NEXT_PUBLIC_APP_NAME` e `NEXT_PUBLIC_BRAND_NAME` já vêm preenchidas com
+`Tracking` no formulário — troque pelo nome do cliente. O nome do cabeçalho do
+painel ainda pode ser corrigido no passo 5, sem redeploy; o do `<title>` não.
+
+> **`TRACKING_DEFAULT_PHONE_COUNTRY` vem `BR` — troque se o cliente não for do
+> Brasil.** Numa compra, o país do telefone sai da moeda da venda (BRL → BR,
+> USD → US, EUR → PT). Esta variável vale onde não há moeda: os formulários e o
+> `negou.identify()` do site, antes de qualquer compra. País errado aqui não dá
+> erro nenhum — o hash do telefone só deixa de casar no Meta. Mudar depois
+> exige um novo deploy.
 
 ## 4. Primeiro acesso — AGORA, antes do domínio
 
@@ -145,13 +153,16 @@ Daqui para baixo é tudo dentro do painel, com a conta criada no passo 4.
 **Configurações → Contas:** cadastre os pixels do Meta, as propriedades GA4 e as
 contas de anúncio do cliente. Use "Testar conexão" em cada uma.
 
-**Configurações → Disparo:**
-- **URL do cron:** `https://tracking.cliente-a.com.br/api/cron/dispatch`
-- **Token do cron:** gere e **guarde** — ele só aparece uma vez.
-- Modo: `adaptive` (padrão) e janela de 15 min, salvo pedido contrário.
+**Disparo atrasado: não há nada para ativar.** O primeiro login no painel (em
+qualquer tela) já registra sozinho o endereço que o pg_cron chama e o token
+que ele usa, a partir do domínio por onde você acessou. Se o domínio mudar
+depois (ex.: de `*.vercel.app` para `tracking.cliente-a.com.br`), o próximo
+acesso pelo domínio novo corrige sozinho.
 
-Sem a URL do cron preenchida, `tick_event_queue()` sai em silêncio e a fila
-nunca drena. Este passo é **depois** do deploy, porque a URL só existe agora.
+Em **Eventos → aba Delay** só resta escolher o modo e a janela, se o padrão
+(`adaptive`, 15 min) não servir. A mesma aba mostra quando o pg_cron chamou o
+endpoint pela última vez — é assim que se confirma que está funcionando, sem
+abrir o SQL Editor.
 
 **Configurações → Geral:** gere o `webhook_token` (também mostrado uma vez só) e
 cadastre na plataforma de pagamento:

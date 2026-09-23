@@ -36,7 +36,7 @@ export function AllowedOriginsSection({
   }
 
   return (
-    <form action={formAction} className="relative flex h-full flex-col items-center justify-between overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-6 text-center sm:p-8 shadow-sm">
+    <form action={formAction} className="relative flex flex-col items-center overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-6 text-center sm:p-8 shadow-sm min-h-[380px]">
       {/* Decorative background glow */}
       <div className="pointer-events-none absolute -top-24 left-1/2 h-48 w-full max-w-md -translate-x-1/2 rounded-full bg-primary/15 opacity-50 blur-3xl" />
 
@@ -44,33 +44,12 @@ export function AllowedOriginsSection({
         <div className="flex flex-col items-center gap-2">
           <Globe className="size-6 text-primary" />
           <h2 className="text-xl font-semibold tracking-tight">Domínios autorizados</h2>
-          <p className="text-[13px] text-muted-foreground text-balance">
+          <p className="text-[13px] text-muted-foreground text-balance min-h-[40px]">
             Todo site que carrega o <code className="font-mono text-xs">track.js</code> precisa estar aqui. Adicione sem barra final.
           </p>
         </div>
 
-        <div className="flex w-full flex-col gap-4 mt-auto">
-          {domains.length > 0 && (
-            <div className="flex flex-wrap items-center justify-center gap-2">
-              {domains.map((domain) => (
-                <div
-                  key={domain}
-                  className="flex items-center gap-2 rounded-xl border border-primary/20 bg-background/50 px-3 py-1.5 font-mono text-[13px] shadow-sm backdrop-blur transition-colors hover:border-primary/40"
-                >
-                  <span>{domain}</span>
-                  <button
-                    type="button"
-                    onClick={() => removeDomain(domain)}
-                    className="text-muted-foreground transition-colors hover:text-destructive"
-                    aria-label={`Remover ${domain}`}
-                  >
-                    <X className="size-3.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-          
+        <div className="flex w-full flex-col gap-4">
           <div className="relative flex w-full items-center justify-center">
             <input type="hidden" name="allowed_origins" value={domains.join("\n")} />
             <Input
@@ -106,6 +85,27 @@ export function AllowedOriginsSection({
             <span className={state.ok ? "text-xs font-medium text-primary" : "text-xs font-medium text-destructive"}>
               {state.message}
             </span>
+          )}
+
+          {domains.length > 0 && (
+            <div className="flex flex-wrap items-center justify-center gap-2 pt-2 mt-2">
+              {domains.map((domain) => (
+                <div
+                  key={domain}
+                  className="flex items-center gap-2 rounded-xl border border-primary/20 bg-background/50 px-3 py-1.5 font-mono text-[13px] shadow-sm backdrop-blur transition-colors hover:border-primary/40"
+                >
+                  <span>{domain}</span>
+                  <button
+                    type="button"
+                    onClick={() => removeDomain(domain)}
+                    className="text-muted-foreground transition-colors hover:text-destructive"
+                    aria-label={`Remover ${domain}`}
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
           )}
         </div>
       </div>

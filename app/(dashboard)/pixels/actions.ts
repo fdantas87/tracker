@@ -221,23 +221,10 @@ export async function saveDispatchSettings(
       return fail(immediate.error)
     }
 
-    const phoneCountry = String(formData.get("default_phone_country") ?? "").trim()
-    if (!/^[0-9]{1,3}$/.test(phoneCountry)) {
-      return fail("O código do país precisa ter de 1 a 3 dígitos (Brasil = 55).")
-    }
-
-    const cronUrlRaw = String(formData.get("dispatch_cron_url") ?? "").trim()
-    if (cronUrlRaw) {
-      try {
-        const parsed = new URL(cronUrlRaw)
-        if (parsed.protocol !== "https:" && parsed.hostname !== "localhost") {
-          return fail("A URL do cron precisa ser https.")
-        }
-      } catch {
-        return fail("URL do cron inválida.")
-      }
-    }
-
+    // dispatch_cron_url NÃO é tocado aqui: quem cuida dele é
+    // ensureCronDispatchConfigured (lib/settings/cron-autoconfig.ts), sozinho,
+    // a cada acesso ao painel. Gravar a coluna aqui a apagaria, porque o campo
+    // não existe mais no formulário.
     const supabase = createServiceClient()
     const { error } = await supabase
       .from("settings")
@@ -245,8 +232,6 @@ export async function saveDispatchSettings(
         dispatch_mode: mode,
         dispatch_delay_seconds: delaySeconds,
         dispatch_immediate_events: immediate,
-        default_phone_country: phoneCountry,
-        dispatch_cron_url: cronUrlRaw || null,
       })
       .eq("id", true)
 
@@ -254,7 +239,7 @@ export async function saveDispatchSettings(
 
     // Sem isto a mudança demoraria até 60s pra valer (o memo do módulo).
     invalidateDispatchConfig()
-    revalidatePath("/pixels")
+    revalidatePath("/eventos")
     return succeed("Configurações de disparo salvas.")
   } catch (error) {
     return fail(toMessage(error, "Falha ao salvar."))
@@ -287,12 +272,14 @@ export async function saveFormCaptureSettings(
 }
 
 /**
- * Gera o token que o pg_cron usa pra chamar /api/cron/dispatch.
+ * Gira o token que o pg_cron usa pra chamar /api/cron/dispatch.
+ *
+ * A criação normal é automática (`ensureCronDispatchConfigured`, chamado pelo
+ * layout do painel); isto só existe pra invalidar o token atual de propósito.
  *
  * Diferente do token do webhook, este vai pro Vault em vez de virar hash: o
- * pg_cron precisa LER o valor bruto pra mandar no header. Guardando só no
- * Vault, uma representação só existe, e trocar o token aqui já vale no próximo
- * tique sem editar SQL nenhum.
+ * pg_cron precisa LER o valor bruto pra mandar no header. E, também diferente
+ * dele, não é devolvido pra tela: ninguém precisa colá-lo em lugar nenhum.
  */
 export async function regenerateCronToken(): Promise<ActionState> {
   try {
@@ -324,11 +311,8 @@ export async function regenerateCronToken(): Promise<ActionState> {
       }
     }
 
-    revalidatePath("/pixels")
-    return succeed(
-      "Token do cron gerado. O pg_cron lê o valor direto do Vault, então não é preciso colar em lugar nenhum.",
-      token
-    )
+    revalidatePath("/eventos")
+    return succeed("Token novo gerado. O anterior parou de valer e o pg_cron já usa o novo no próximo minuto.")
   } catch (error) {
     return fail(toMessage(error, "Falha ao gerar o token do cron."))
   }

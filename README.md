@@ -26,10 +26,10 @@ Melhorou o código? Um push atualiza todos os deploys.
 1. **Supabase:** crie o projeto e rode
    [`supabase/setup.sql`](https://github.com/fdantas87/tracker/raw/main/supabase/setup.sql)
    no SQL Editor — um arquivo, uma colada, o schema inteiro.
-2. **Vercel:** clique no botão e preencha as 6 variáveis (as 3 chaves do
+2. **Vercel:** clique no botão e preencha as 7 variáveis (as 3 chaves do
    Supabase vêm do passo 1).
 
-   [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Ffdantas87%2Ftracker&project-name=tracking-cliente&repository-name=tracking-cliente&envDescription=Cole+as+3+chaves+do+projeto+Supabase+do+cliente+%28Settings+%3E+API%29%2C+liste+os+sites+onde+o+track.js+sera+instalado+e+escolha+o+nome+do+painel.&envLink=https%3A%2F%2Fgithub.com%2Ffdantas87%2Ftracker%2Fblob%2Fmain%2FONBOARDING.md%23variaveis-de-ambiente&envDefaults=%7B%22NEXT_PUBLIC_APP_NAME%22%3A%22Tracking%22%2C%22NEXT_PUBLIC_BRAND_NAME%22%3A%22Tracking%22%7D&env=NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY,TRACKING_ALLOWED_ORIGINS,NEXT_PUBLIC_APP_NAME,NEXT_PUBLIC_BRAND_NAME)
+   [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Ffdantas87%2Ftracker&project-name=tracking-cliente&repository-name=tracking-cliente&envDescription=Cole+as+3+chaves+do+projeto+Supabase+do+cliente+%28Settings+%3E+API%29%2C+liste+os+sites+onde+o+track.js+sera+instalado%2C+escolha+o+nome+do+painel+e+o+pais+padrao+do+telefone+%28ISO-2%2C+ex.+BR%29.&envLink=https%3A%2F%2Fgithub.com%2Ffdantas87%2Ftracker%2Fblob%2Fmain%2FONBOARDING.md%23variaveis-de-ambiente&envDefaults=%7B%22NEXT_PUBLIC_APP_NAME%22%3A%22Tracking%22%2C%22NEXT_PUBLIC_BRAND_NAME%22%3A%22Tracking%22%2C%22TRACKING_DEFAULT_PHONE_COUNTRY%22%3A%22BR%22%7D&env=NEXT_PUBLIC_SUPABASE_URL,NEXT_PUBLIC_SUPABASE_ANON_KEY,SUPABASE_SERVICE_ROLE_KEY,TRACKING_ALLOWED_ORIGINS,NEXT_PUBLIC_APP_NAME,NEXT_PUBLIC_BRAND_NAME,TRACKING_DEFAULT_PHONE_COUNTRY)
 
 3. **Painel:** abra a URL gerada e crie a conta de administrador na própria tela
    de login. Depois, cadastre pixels e GA4 em Configurações.
@@ -65,11 +65,14 @@ respondem 500 e nada é capturado. Ver [ONBOARDING.md](./ONBOARDING.md).
 | `TRACKING_ALLOWED_ORIGINS` | **sim** | Origens que podem capturar, separadas por vírgula. Vazia = captura bloqueada pelo navegador, em silêncio |
 | `NEXT_PUBLIC_APP_NAME` | não | Nome no `<title>`. Default: `Tracking` |
 | `NEXT_PUBLIC_BRAND_NAME` | não | Marca no cabeçalho do painel. Default: o `APP_NAME` |
+| `TRACKING_DEFAULT_PHONE_COUNTRY` | não | País (ISO-2) do telefone quando não há compra para derivá-lo da moeda. Default: `BR`. **Cliente fora do Brasil precisa preencher** |
 
-As duas últimas são inlinadas em tempo de build, então o wizard do botão as pede
-mesmo assim, já preenchidas com `Tracking` — mudá-las depois exigiria um novo
-deploy. O nome que aparece no cabeçalho do painel também pode ser corrigido no
-primeiro acesso, sem redeploy.
+`NEXT_PUBLIC_APP_NAME` e `NEXT_PUBLIC_BRAND_NAME` são inlinadas em tempo de
+build, então o wizard do botão as pede mesmo assim, já preenchidas com
+`Tracking` — mudá-las depois exigiria um novo deploy. O nome que aparece no
+cabeçalho do painel também pode ser corrigido no primeiro acesso, sem redeploy.
+`TRACKING_DEFAULT_PHONE_COUNTRY` também vem no wizard, preenchida com `BR`:
+errar o país não dá erro nenhum, só zera a correspondência de telefone no Meta.
 
 ## Comandos
 
