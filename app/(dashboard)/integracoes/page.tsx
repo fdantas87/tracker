@@ -1,8 +1,7 @@
 import type { Metadata } from "next"
-import { TriangleAlert } from "lucide-react"
 
 import { pageTitle } from "@/lib/branding"
-import { getSettings, getStripeAccount, type StripeAccountRow } from "@/lib/settings/queries"
+import { getSettings, getStripeAccount } from "@/lib/settings/queries"
 import {
   IntegrationCard,
   IntegrationSection,
@@ -29,34 +28,18 @@ export const metadata: Metadata = {
  * misturá-las numa tela só foi o que motivou esta separação.
  */
 export default async function IntegrationsPage() {
-  const [stripe, settings] = await Promise.all([
-    lerStripe(),
+  // Falha na leitura do Stripe vira "não conectado" aqui; o diagnóstico vai pro ícone de status.
+  const [stripeAccount, settings] = await Promise.all([
+    getStripeAccount().catch(() => null),
     getSettings().catch(() => null),
   ])
 
   const hasWebhookToken = settings?.hasWebhookToken ?? false
-  const isStripeConfigured = Boolean(stripe.account?.hasSecretKey && stripe.account?.hasWebhookSecret)
+  const isStripeConfigured = Boolean(stripeAccount?.hasSecretKey && stripeAccount?.hasWebhookSecret)
   const isPerfectPayConfigured = hasWebhookToken
 
   return (
     <div className="flex flex-col gap-8">
-      {stripe.erro ? (
-        <div className="flex items-start gap-2 rounded-xl border border-amber/40 bg-amber/5 p-4">
-          <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber" />
-          <div className="min-w-0">
-            <p className="text-sm font-medium">
-              Não foi possível ler a integração do Stripe
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Se este painel acabou de ser atualizado, a migration
-              <code className="mx-1 font-mono">20260921130000_stripe_integration.sql</code>
-              ainda não foi aplicada no banco. Rode-a no SQL Editor do Supabase e
-              recarregue. Detalhe: {stripe.erro}
-            </p>
-          </div>
-        </div>
-      ) : null}
-
       <Tabs defaultValue="site" className="gap-4">
         <TabsList className="w-full overflow-x-auto sm:w-auto">
           <TabsTrigger value="site">Site</TabsTrigger>
@@ -74,7 +57,7 @@ export default async function IntegrationsPage() {
             description="De onde vêm as compras. Cada venda recebida é gravada, casada com a visita que a originou e enviada como Purchase para o Meta e para o GA4."
           >
             {isStripeConfigured && (
-              <StripeCard account={stripe.account} hasWebhookToken={hasWebhookToken} />
+              <StripeCard account={stripeAccount} hasWebhookToken={hasWebhookToken} />
             )}
 
             {isPerfectPayConfigured && (
@@ -88,7 +71,7 @@ export default async function IntegrationsPage() {
             )}
           </IntegrationSection>
 
-          <PlatformManager stripeAccount={stripe.account} hasWebhookToken={hasWebhookToken} />
+          <PlatformManager stripeAccount={stripeAccount} hasWebhookToken={hasWebhookToken} />
 
 
         </TabsContent>
@@ -99,23 +82,4 @@ export default async function IntegrationsPage() {
       </Tabs>
     </div>
   )
-}
-
-/**
- * A leitura do Stripe é isolada porque ela é a única que pode falhar por falta
- * de migration. Falhando, a tela INTEIRA não pode sumir: o card do PerfectPay
- * e o aviso do que fazer valem mais do que uma página de erro.
- */
-async function lerStripe(): Promise<{
-  account: StripeAccountRow | null
-  erro: string | null
-}> {
-  try {
-    return { account: await getStripeAccount(), erro: null }
-  } catch (error) {
-    return {
-      account: null,
-      erro: error instanceof Error ? error.message : "erro desconhecido",
-    }
-  }
 }

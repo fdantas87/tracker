@@ -5,6 +5,15 @@ import { usePathname } from "next/navigation"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { UserMenu } from "@/components/user-menu"
 import { TopbarPeriodSelector } from "@/components/dashboard/topbar-period-selector"
+import {
+  SidebarTrigger,
+  useSidebar,
+} from "@/components/ui/sidebar"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 
 const META = {
   "/": {
@@ -40,11 +49,25 @@ const META = {
 
 export function TopbarHeader({ email }: { email: string }) {
   const pathname = usePathname()
+  const { state } = useSidebar()
   // Trata rotas filhas também se precisar, mas no momento é match direto
   const info = META[pathname as keyof typeof META]
 
+  const triggerTooltip = state === "expanded" ? "Recolher menu" : "Expandir menu"
+
   return (
     <header className="sticky top-0 z-50 flex h-14 shrink-0 items-center gap-4 border-b bg-background/80 px-4 backdrop-blur-md">
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div>
+            <SidebarTrigger className="shrink-0" />
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="bottom" className="text-xs">
+          {triggerTooltip}
+        </TooltipContent>
+      </Tooltip>
+
       {info && (
         <div className="flex min-w-0 flex-1 flex-col justify-center">
           <h1 className="truncate text-sm font-semibold tracking-tight text-primary/80 font-mono uppercase">

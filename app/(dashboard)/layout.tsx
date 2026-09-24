@@ -1,9 +1,11 @@
 import { after } from "next/server"
-import { headers } from "next/headers"
+import { headers, cookies } from "next/headers"
 import { redirect } from "next/navigation"
 
+import { getHealthStatus } from "@/lib/health/checks"
 import { ensureCronDispatchConfigured } from "@/lib/settings/cron-autoconfig"
 import { createClient } from "@/lib/supabase/server"
+import { SIDEBAR_COOKIE_NAME } from "@/lib/sidebar-cookie"
 import { DashboardSidebar } from "@/components/dashboard-sidebar"
 import { ThemeToggle } from "@/components/theme-toggle"
 import { UserMenu } from "@/components/user-menu"
@@ -44,14 +46,15 @@ export default async function DashboardLayout({
     })
   }
 
-  // Verificação de conexão com o banco (RLS)
-  const [visitors, events, purchases] = await Promise.all([
-    supabase.from("visitors").select("*", { count: "exact", head: true }),
-    supabase.from("events_log").select("*", { count: "exact", head: true }),
-    supabase.from("purchases").select("*", { count: "exact", head: true }),
-  ])
-  const dbHasError = Boolean(visitors.error || events.error || purchases.error)
-  const dbErrors = [visitors, events, purchases].filter((r) => r.error).map((r) => r.error?.message)
+  const health = await getHealthStatus()
+
+  // Lê a preferência do usuário (expandido/colapsado) salva em cookie.
+  // Se não existir (primeira visita), cai no fallback `true` (desktop assumido);
+  // o cliente corrige isso pra tablet na primeira visita com o hook `useIsTabletRange`.
+  const cookieStore = await cookies()
+  const sidebarCookie = cookieStore.get(SIDEBAR_COOKIE_NAME)
+  const hasStoredPreference = sidebarCookie !== undefined
+  const defaultOpen = hasStoredPreference ? sidebarCookie.value === "true" : true
 
   const email = user.email ?? "sem email"
   // Definido no primeiro acesso (`completeSetup`). Fica em `app_metadata`, e
@@ -64,8 +67,14 @@ export default async function DashboardLayout({
       : undefined
 
   return (
-    <SidebarProvider>
-      <DashboardSidebar userEmail={email} brandName={orgName} dbHasError={dbHasError} dbErrors={dbErrors as string[]} />
+    <SidebarProvider defaultOpen={defaultOpen}>
+      <DashboardSidebar
+        userEmail={email}
+        brandName={orgName}
+        healthLevel={health.level}
+        healthIssues={health.issues}
+        hasStoredPreference={hasStoredPreference}
+      />
       <SidebarInset>
         <TopbarHeader email={email} />
         <div className="flex flex-1 flex-col gap-6 p-4 sm:p-6">{children}</div>

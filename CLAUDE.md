@@ -82,6 +82,7 @@ apps/tracking.negou.net/
 │   ├── dashboard/geo-filters.ts            # ✅ fase 8c — período + nomeDoPais (SEM server-only)
 │   ├── dashboard/geo-fit.ts                # ✅ fase 8c — enquadramento automático (SEM server-only, roda no cliente)
 │   ├── dashboard/geo.ts                    # ✅ fase 8c — pontos, rankings e receita por região (sob RLS)
+│   ├── health/{types,checks}.ts            # ✅ ícone de status da sidebar (verde/âmbar/vermelho)
 │   ├── geo.ts                              # ✅ fase 5 — IP real + os 8 headers x-vercel-ip-*
 │   ├── phone-country.ts                    # ✅ país padrão do telefone (TRACKING_DEFAULT_PHONE_COUNTRY)
 │   ├── rate-limit.ts                       # ✅ fase 5 — Upstash quando configurado, memória senão
@@ -787,9 +788,42 @@ motivou a separação.
 `20260921130000_stripe_integration.sql` acrescenta `'stripe'` ao CHECK de
 `purchases.platform` e cria `stripe_accounts`. Sem ela: o CHECK recusa a linha
 e **a venda do Stripe não é registrada**, e a tela de Integrações não consegue
-ler as credenciais. A tela avisa qual arquivo rodar em vez de quebrar, mas o
-webhook não tem como degradar — ele recusa, porque aceitar sem poder conferir a
+ler as credenciais. A tela não quebra: mostra o Stripe como não conectado, e o
+aviso com o nome da migration fica no ícone de status da sidebar, em âmbar (ver
+"Ícone de status"). Já o webhook não tem como degradar — ele recusa, porque aceitar sem poder conferir a
 assinatura injetaria venda falsa no painel e no Meta.
+
+---
+
+## Ícone de status (sidebar)
+
+O ícone fixo no rodapé da sidebar é o lugar **único** para aviso técnico do
+painel. Verde / âmbar / vermelho, e o clique abre um Popover com a lista do que
+está errado. A fonte é `getHealthStatus()` (`lib/health/checks.ts`), chamada
+pelo `app/(dashboard)/layout.tsx` em toda página; os tipos ficam em
+`lib/health/types.ts`, sem `server-only`, porque a sidebar é Client Component.
+
+- **Vermelho (`error`):** o banco não respondeu às 3 leituras sob RLS
+  (`visitors`/`events_log`/`purchases`). O painel inteiro está sem dado.
+- **Âmbar (`warn`):** algo acessório não está legível — hoje, só a tabela do
+  Stripe (migration `20260921130000_stripe_integration.sql` pendente).
+- **Por que existe:** a tela de Integrações mostrava um banner âmbar citando o
+  nome da migration e o SQL Editor para um cliente que **nem tinha configurado o
+  Stripe**. Isso é informação de desenvolvedor, e na tela da feature ela só
+  empobrecia a experiência. Agora a tela da feature trata falha de leitura de
+  integração opcional como "não conectado", e o diagnóstico vai para o ícone.
+- **O que NÃO vai para o ícone:** o aviso de leitura falha em Eventos, Visitantes,
+  Vendas e Geo. Ali o erro muda o significado dos números da própria tela (ver
+  "Erro de leitura NÃO substitui a tela" em Vendas) e precisa ficar ao lado
+  deles. Regra: erro que invalida o que a tela está mostrando fica na tela;
+  erro de peça acessória ou de instalação vai para o ícone.
+- **Acrescentar uma checagem** é empurrar um `HealthIssue` em
+  `getHealthStatus()`, rodando em paralelo no mesmo `Promise.all` — ela roda em
+  toda página do painel, então só leitura barata. `getCronStatus()` e
+  `getQueueDepth()` (`lib/settings/queries.ts`) são as candidatas naturais para
+  âmbar e ficaram de fora por decisão do usuário.
+- **O desenvolvedor não depende do ícone:** ele é avisado das pontas soltas
+  antes de todo `git push` (ver "Git & Commits").
 
 ---
 
@@ -1015,6 +1049,7 @@ histórico de incidentes) e `implementation_plan.md`.
 - **Mensagem de commit:** `feat:`, `fix:`, `refactor:`, `chore:` (mesmo padrão do resto do monorepo)
 - **Atribuição:** `Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>` (ou o modelo real da sessão que fez o commit)
 - **Push:** nunca automático — só quando pedido explicitamente
+- **Pontas soltas ANTES de todo `git push`.** Antes de executar o push, o agente relê "Pendências manuais" (abaixo) e o que ficou em aberto na própria conversa — migration nova que ainda não foi colada no SQL Editor, variável de ambiente a preencher na Vercel, ordem migration→deploy (ou a inversa), item "não verificado" do Histórico — e lista para o usuário o que é relevante ao que está sendo publicado, perguntando se **segue agora ou adia**. Só executa depois da resposta. Sem ponta solta, diz isso em uma linha e segue. É aqui, e não na tela do painel, que o desenvolvedor fica sabendo do que falta: o painel é do cliente (ver "Ícone de status").
 
 ### Segurança (não negociável, ver auditoria final na fase 10)
 
@@ -1150,6 +1185,23 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-09-24:** Aviso técnico saiu da tela de Integrações e foi para o ícone de
+  status da sidebar, que passou de verde/vermelho para verde/âmbar/vermelho.
+  Arquivos novos: `lib/health/{types,checks}.ts`; alterados
+  `app/(dashboard)/layout.tsx`, `components/dashboard-sidebar.tsx` e
+  `app/(dashboard)/integracoes/page.tsx`. Ver "Ícone de status".
+  - **Motivação do usuário:** o banner "Não foi possível ler a integração do
+    Stripe" aparecia para quem nunca configurou o Stripe, citando nome de
+    migration. Aviso que só o desenvolvedor sabe usar não pertence à tela do
+    cliente.
+  - **Para o desenvolvedor**, a regra nova de "Git & Commits": pontas soltas
+    listadas antes de todo `git push`, com a escolha de seguir ou adiar.
+  - **Escopo fechado de propósito:** fila e pg_cron no ícone ficaram de fora, e
+    os banners de leitura de Eventos/Visitantes/Vendas/Geo continuam onde
+    estão.
+  - **Achado de passagem:** o texto do Popover no estado verde ainda dizia que as
+    tabelas "estão vazias porque a captura de eventos ainda não foi construída"
+    — sobra da fase 3. Trocado.
 - **2026-09-24:** Catraca de build. Dois erros de TypeScript chegaram à Vercel
   no deploy anterior sem terem sido pegos na máquina local: variants do Framer
   Motion sem o tipo `Variants` (`overview-dashboard.tsx`) e a prop obrigatória

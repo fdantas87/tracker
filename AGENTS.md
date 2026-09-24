@@ -144,6 +144,24 @@ Desde
 pela GitHub Action `.github/workflows/build.yml` — mas eles são a rede de
 segurança, não um substituto para rodar o build antes de dizer que terminou.
 
+O build **não** roda o ESLint: desde o Next.js 16, `next build` deixou de
+lintar. Erro de lint não derruba o deploy, mas se a tarefa mexeu em código,
+rode também `npm run lint` nos arquivos tocados.
+
+`git push` não é o único caminho até a Vercel. Um `vercel --prod` pela CLI
+sobe o código direto, sem passar pelo hook nem pela Action. Nesse caminho, a
+única proteção é ter rodado o build antes.
+
+### Pontas soltas antes de todo `git push`
+
+Antes de executar o push, o agente relê "Pendências manuais" do `CLAUDE.md` e
+o que ficou em aberto na própria conversa — migration nova que ainda não foi
+colada no SQL Editor, variável de ambiente a preencher na Vercel, ordem
+migration→deploy (ou a inversa), item não verificado — e lista para o usuário
+o que é relevante ao que está sendo publicado, perguntando se segue agora ou
+adia. Só executa depois da resposta. Sem ponta solta, diz isso em uma linha e
+segue.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

@@ -2,20 +2,24 @@
 
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import { useEffect, useRef } from "react"
 
 import { BRAND_NAME } from "@/lib/branding"
+import { useIsTabletRange } from "@/hooks/use-tablet-range"
 import {
   Activity,
   Globe,
   LayoutDashboard,
-  Megaphone,
   Plug,
   Settings,
   ShoppingCart,
   Users,
   CheckCircle2,
+  TriangleAlert,
   XCircle,
 } from "lucide-react"
+
+import type { HealthIssue, HealthLevel } from "@/lib/health/types"
 
 import {
   Sidebar,
@@ -28,6 +32,7 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarRail,
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
@@ -44,11 +49,18 @@ const NAV_ITEMS = [
   { href: "/pixels", label: "Pixels", icon: Settings },
 ] as const
 
+const HEALTH_VIEW = {
+  ok: { icon: CheckCircle2, color: "text-primary", ring: "bg-primary/40", title: "Tudo OK" },
+  warn: { icon: TriangleAlert, color: "text-amber", ring: "bg-amber/40", title: "Atenção" },
+  error: { icon: XCircle, color: "text-destructive", ring: "bg-destructive/40", title: "Problema detectado" },
+} as const
+
 export function DashboardSidebar({
   userEmail,
   brandName,
-  dbHasError = false,
-  dbErrors = [],
+  healthLevel = "ok",
+  healthIssues = [],
+  hasStoredPreference = false,
 }: {
   userEmail: string
   /**
@@ -58,11 +70,34 @@ export function DashboardSidebar({
    * exigiria um novo deploy. Sem valor, cai para a variável.
    */
   brandName?: string
-  dbHasError?: boolean
-  dbErrors?: string[]
+  healthLevel?: HealthLevel
+  healthIssues?: HealthIssue[]
+  /**
+   * Flag do servidor indicando se já existe uma preferência de sidebar salva
+   * em cookie. Usado para decidir se o auto-colapso em tablet deve ser aplicado.
+   */
+  hasStoredPreference?: boolean
 }) {
   const pathname = usePathname()
-  const { setOpenMobile, isMobile } = useSidebar()
+  const health = HEALTH_VIEW[healthLevel]
+  const HealthIcon = health.icon
+  const { setOpenMobile, isMobile, open, setOpen } = useSidebar()
+  const isTabletRange = useIsTabletRange()
+  const hasAutoCollapsedRef = useRef(false)
+
+  // Auto-colapso de tablet na primeira visita (sem cookie salvo).
+  // Roda uma única vez no mount, nunca de novo em resize.
+  useEffect(() => {
+    if (
+      !hasAutoCollapsedRef.current &&
+      !hasStoredPreference &&
+      isTabletRange &&
+      open === true
+    ) {
+      hasAutoCollapsedRef.current = true
+      setOpen(false)
+    }
+  }, [hasStoredPreference, isTabletRange, open, setOpen])
 
   // No celular a navegação é um drawer: fecha sozinho ao escolher um item.
   function handleNavigate() {
@@ -121,31 +156,41 @@ export function DashboardSidebar({
           <PopoverTrigger asChild>
             <button
               className="flex shrink-0 items-center justify-center rounded-full transition-transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-primary/20"
-              title="Status de Conexão"
+              title="Status de funcionamento"
+              aria-label={`Status de funcionamento: ${health.title}`}
             >
-              {!dbHasError ? (
-                <div className="relative flex items-center justify-center">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/40 opacity-75"></span>
-                  <CheckCircle2 className="relative size-4 text-primary" />
-                </div>
-              ) : (
-                <div className="relative flex items-center justify-center">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive/40 opacity-75"></span>
-                  <XCircle className="relative size-4 text-destructive" />
-                </div>
-              )}
+              <div className="relative flex items-center justify-center">
+                <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-75 ${health.ring}`}></span>
+                <HealthIcon className={`relative size-4 ${health.color}`} />
+              </div>
             </button>
           </PopoverTrigger>
           <PopoverContent align="start" side="right" className="w-80">
-            <div className="flex flex-col gap-2">
-              <h4 className="font-medium leading-none">
-                {!dbHasError ? "Tudo OK" : "Problema Detectado"}
-              </h4>
-              <p className="text-sm text-muted-foreground">
-                {!dbHasError
-                  ? "As tabelas responderam com a sessão do usuário, passando por RLS. Estão vazias porque a captura de eventos ainda não foi construída."
-                  : dbErrors.join(" · ")}
-              </p>
+            <div className="flex flex-col gap-3">
+              <h4 className="font-medium leading-none">{health.title}</h4>
+              {healthIssues.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  O banco respondeu com a sessão do usuário, passando por RLS.
+                </p>
+              ) : (
+                <ul className="flex flex-col gap-3">
+                  {healthIssues.map((issue) => {
+                    const view = HEALTH_VIEW[issue.level]
+                    const IssueIcon = view.icon
+                    return (
+                      <li key={issue.title} className="flex items-start gap-2">
+                        <IssueIcon className={`mt-0.5 size-4 shrink-0 ${view.color}`} aria-hidden />
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium">{issue.title}</p>
+                          <p className="mt-0.5 break-words text-xs text-muted-foreground">
+                            {issue.message}
+                          </p>
+                        </div>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
             </div>
           </PopoverContent>
         </Popover>
@@ -157,6 +202,8 @@ export function DashboardSidebar({
           {userEmail}
         </p>
       </SidebarFooter>
+
+      <SidebarRail />
     </Sidebar>
   )
 }
