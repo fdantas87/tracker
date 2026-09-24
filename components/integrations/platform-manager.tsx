@@ -51,6 +51,7 @@ export function PlatformManager({
         open={stripeOpen} 
         onOpenChange={setStripeOpen} 
         account={stripeAccount} 
+        hasWebhookToken={hasWebhookToken}
       />
     </div>
   )

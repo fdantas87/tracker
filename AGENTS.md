@@ -114,6 +114,36 @@ import { ShaderCard } from "@/components/ui/shader-card"
 - O componente precisa de `style={{width: '100%', height: '100%'}}` para dimensionar o canvas.
 - Todo conteúdo acima do shader deve ter `relative z-10` para ficar visível.
 
+---
+
+## Regra de Validação — Build Obrigatório
+
+Antes de declarar qualquer tarefa de código como concluída, o agente (IA ou
+humano) **DEVE** executar `npm run build` no terminal e confirmar que o comando
+termina com código de saída 0 (sucesso).
+
+Se o build falhar:
+1. Corrigir todos os erros reportados.
+2. Rodar `npm run build` novamente.
+3. Repetir até que o build passe sem erros.
+
+Nunca responda "Pronto!" ou "Tarefa concluída" se o build não passou.
+
+### Por quê?
+
+O deploy na Vercel executa `npm run build` e aborta se houver qualquer erro de
+TypeScript ou das verificações customizadas (`check:actions`,
+`check:setup-sql`). Validar localmente evita deploys quebrados.
+
+O build **não** roda o ESLint: desde o Next.js 16, `next build` deixou de
+lintar. Erro de lint não derruba o deploy, mas se a tarefa mexeu em código,
+rode também `npm run lint` nos arquivos tocados.
+
+Desde
+24/09/2026 o mesmo gate também é aplicado por um hook `pre-push` do Husky e
+pela GitHub Action `.github/workflows/build.yml` — mas eles são a rede de
+segurança, não um substituto para rodar o build antes de dizer que terminou.
+
 <!-- BEGIN:nextjs-agent-rules -->
 
 # This is NOT the Next.js you know

@@ -7,13 +7,15 @@
     "build": "npm run check:actions && npm run check:setup-sql && next build",
     "start": "next start",
     "lint": "eslint",
+    "typecheck": "tsc --noEmit",
     "check:actions": "node scripts/check-server-actions.mjs",
     "check:setup-sql": "node scripts/build-setup-sql.mjs --check",
     "build:setup-sql": "node scripts/build-setup-sql.mjs",
     "verify:dispatch": "node scripts/verify-dispatch.mjs",
     "verify:captura": "node scripts/verify-captura.mjs",
     "seed": "node scripts/seed-events.mjs",
-    "seed:limpar": "node scripts/seed-events.mjs --limpar"
+    "seed:limpar": "node scripts/seed-events.mjs --limpar",
+    "prepare": "husky"
   },
   "dependencies": {
     "@paper-design/shaders-react": "^0.0.81",
@@ -47,6 +49,7 @@
     "@types/react-dom": "^19",
     "eslint": "^9",
     "eslint-config-next": "16.3.5",
+    "husky": "^9.1.7",
     "tailwindcss": "^4",
     "typescript": "^5"
   }

@@ -9,3 +9,7 @@
 # o que impede o `git status` de ficar permanentemente sujo depois de rodá-lo.
 *.sql text eol=lf
 *.mjs text eol=lf
+
+# Hook do Husky roda com `sh -e`: em CRLF, o sh leria `npm run build\r` e o npm
+# responderia "Missing script", recusando todo push de um clone feito no Windows.
+.husky/* text eol=lf

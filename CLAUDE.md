@@ -114,6 +114,8 @@ apps/tracking.negou.net/
 ├── scripts/build-setup-sql.mjs             # ✅ deploy 1-clique — gera setup.sql; --check roda no build
 ├── scripts/seed-events.mjs                 # ✅ fase 8a — npm run seed / seed:limpar
 ├── .gitattributes                          # ✅ deploy 1-clique — *.sql em LF (ver "Deploy 1-clique")
+├── .husky/pre-push                         # ✅ catraca de build — `npm run build` antes de todo push
+├── .github/workflows/build.yml             # ✅ catraca de build — o mesmo build em todo push/PR para main
 ├── types/world-atlas.d.ts                  # ✅ fase 8c — TopoJSON como dado, sem inferência do literal
 ├── types/anychart.d.ts                     # ✅ fase 8c — ponte do namespace global para módulo (destravou o build)
 └── supabase/
@@ -1028,6 +1030,13 @@ histórico de incidentes) e `implementation_plan.md`.
 - Server Actions para CRUD que só o próprio dashboard usa; Route Handlers só para os 3 contratos externos (captura, webhook, config pública) — ver estrutura acima
 - Sempre checar a documentação oficial (Meta Graph API, GA4) antes de fixar uma versão/endpoint — a versão da Graph API do Meta vive numa única constante (`META_GRAPH_API_VERSION`), fácil de atualizar
 
+### Validação obrigatória antes de concluir
+
+- **Antes de declarar qualquer tarefa de código como concluída, rode `npm run build` e confirme saída 0.** Build falhou: corrija, rode de novo, repita. Nunca diga "pronto" com o build vermelho. A mesma regra está no `AGENTS.md`, para os outros agentes; está duplicada aqui porque o Claude Code carrega este arquivo automaticamente e não o `AGENTS.md`.
+- **O build não roda o ESLint.** Desde o Next.js 16, `next build` deixou de lintar (doc em `node_modules/next/dist/docs/01-app/02-guides/upgrading/version-16.md`). Erro de lint não derruba o deploy, mas quem mexeu em código roda `npm run lint` nos arquivos tocados.
+- **Duas camadas automáticas aplicam o mesmo gate, e as duas são rede de segurança, não substituto:** o hook `.husky/pre-push` (roda `npm run build` e recusa o push se falhar; contornável com `git push --no-verify`, e só existe numa máquina onde `npm install` rodou) e a GitHub Action `.github/workflows/build.yml` (roda em todo push e PR para `main`, não tem como contornar).
+- **`git push` não é o único caminho até a Vercel.** Um `vercel --prod` pela CLI sobe o código direto, sem passar pelo hook nem pela Action. Nesse caminho, a única proteção é ter rodado o build antes.
+
 ---
 
 ## Fases (commit + aprovação do usuário ao final de cada uma)
@@ -1093,9 +1102,10 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 ```bash
 npm install       # instalar dependências
 npm run dev       # desenvolvimento (http://localhost:3000)
-npm run build     # build de produção (roda check:actions e check:setup-sql antes)
+npm run build     # build de produção (roda check:actions e check:setup-sql antes; é o que o pre-push e a CI rodam)
 npm run start     # rodar a build de produção localmente
-npm run lint      # ESLint
+npm run lint      # ESLint (o build NÃO roda, desde o Next 16)
+npm run typecheck # tsc --noEmit: só os tipos, mais rápido que o build completo
 
 # Regera supabase/setup.sql a partir de supabase/migrations/. Acrescentou uma
 # migration? Rode isto e commite — o `npm run build` falha se os dois divergirem.
@@ -1139,6 +1149,42 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 ---
 
 ## Histórico
+
+- **2026-09-24:** Catraca de build. Dois erros de TypeScript chegaram à Vercel
+  no deploy anterior sem terem sido pegos na máquina local: variants do Framer
+  Motion sem o tipo `Variants` (`overview-dashboard.tsx`) e a prop obrigatória
+  `hasWebhookToken` faltando no `<StripeFormDialog>` (`platform-manager.tsx`).
+  Um `npm run build` local teria barrado os dois. Agora há três camadas: a regra
+  escrita (aqui e no `AGENTS.md`), o hook `.husky/pre-push` (Husky 9.1.7) e a
+  GitHub Action `.github/workflows/build.yml`.
+  - **O plano original tinha três premissas erradas, corrigidas antes de
+    construir:** (1) a app não está em `apps/tracking.negou.net` — é a raiz do
+    repositório; (2) o `next build` **não** roda o ESLint desde o Next 16, então
+    a regra não podia prometer que o build pegava erro de lint; (3) a regra só no
+    `AGENTS.md` não valeria para o Claude Code, que carrega o `CLAUDE.md`.
+  - **O hook é local e contornável, por isso a Action.** `--no-verify`, um clone
+    onde `npm install` não rodou, ou um commit feito pela interface do GitHub
+    passam direto pelo hook. A Action não tem como ser pulada.
+  - **O `prepare: husky` não quebra o build da Vercel.** Conferido no código do
+    Husky 9.1.7: sem `.git` ele só imprime `.git can't be found` e sai com código
+    0. É o caso do upload pela CLI, que não leva o `.git`.
+  - **O `.gitignore` não precisou de mudança.** O Husky cria `.husky/_/` com um
+    `.gitignore` próprio contendo `*`; só `.husky/pre-push` entra no repositório.
+  - **O `.gitattributes` precisou: `.husky/* text eol=lf`.** Com
+    `core.autocrlf=true`, um clone no Windows traria o hook em CRLF, o `sh -e`
+    leria `npm run build\r` e o npm responderia "Missing script" — todo push
+    seria recusado por um motivo que não tem nada a ver com o código.
+  - **O Husky grava `core.hooksPath = .husky/_` no `.git/config` local.** É assim
+    que ele funciona, e é por isso que o hook só vale depois de `npm install`.
+  - Verificado: `npm run build` verde com as duas correções; **teste negativo do
+    hook** com um erro de tipo proposital, disparado por `git hook run pre-push`
+    (roda o gancho sem contatar o remoto), recusado com `husky - pre-push script
+    failed (code 1)` e o TS2322 na tela; e **simulação da CI** numa worktree
+    limpa, sem `.env.local` nem variável nenhuma: `npm ci` + `npm run build` com
+    exit 0 e as mesmas 15 rotas. Isso confirma que o build não depende de secret
+    (as env vars são lidas sob demanda em `lib/supabase/env.ts`).
+  - **Não verificado:** a Action nunca rodou no GitHub. Isso só se prova no
+    primeiro push, olhando a aba Actions.
 
 - **2026-09-23:** O país do telefone passou a vir da moeda da transação. O
   campo "Código do país" da aba Delay e a coluna `settings.default_phone_country`

@@ -1,6 +1,6 @@
 "use client"
 
-import { motion } from "framer-motion"
+import { motion, type Variants } from "framer-motion"
 import { NeuroNoise } from "@paper-design/shaders-react"
 import { ShaderCard } from "@/components/ui/shader-card"
 
@@ -24,7 +24,7 @@ export interface OverviewData {
 }
 
 export function OverviewDashboard({ data }: { data: OverviewData }) {
-  const container = {
+  const container: Variants = {
     hidden: { opacity: 0 },
     show: {
       opacity: 1,
@@ -34,7 +34,7 @@ export function OverviewDashboard({ data }: { data: OverviewData }) {
     },
   }
 
-  const item = {
+  const item: Variants = {
     hidden: { opacity: 0, y: 20 },
     show: { opacity: 1, y: 0, transition: { type: "spring", stiffness: 300, damping: 24 } },
   }
