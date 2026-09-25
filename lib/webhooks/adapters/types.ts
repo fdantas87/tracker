@@ -71,10 +71,51 @@ export type NormalizedPurchase = {
   utmCampaign: string | null
   utmTerm: string | null
   utmContent: string | null
+
+  /**
+   * Quando true, nome e id do produto ficam só no painel e NÃO vão para o Meta
+   * nem para o GA4 (`content_ids`, `content_name`, `items`). Valor e moeda
+   * continuam indo.
+   *
+   * Existe para plataforma de saúde: na Bask o produto é o medicamento, e
+   * mandar "SEMAGLUTIDE" para uma plataforma de anúncio é entregar dado de
+   * saúde a quem não deveria tê-lo. Omitido = false, que é o comportamento de
+   * sempre das outras plataformas.
+   */
+  omitProductFromAds?: boolean
 }
 
+/**
+ * Transição de status de uma venda que JÁ existe, sem os dados da venda.
+ *
+ * Existe porque a gravação normal é um upsert da linha inteira: um evento de
+ * reembolso ou de disputa que só traz ids apagaria email, nome e valor já
+ * gravados. Com este resultado a rota faz um UPDATE só de `status` e
+ * `platform_status`, e o resto da linha fica como estava.
+ */
+export type StatusUpdate = {
+  transactionId: string
+  status: PurchaseStatus
+  platformStatus: string
+}
+
+/**
+ * - `purchase`: a venda completa, gravada por upsert.
+ * - `statusUpdate`: só muda o status de uma venda já gravada.
+ * - `ignored`: o payload é legítimo, mas não é algo que o tracker trata (tipo
+ *   de evento fora do escopo, reembolso parcial...). A rota responde 200.
+ * - `ok: false`: o payload não é o que a plataforma deveria mandar. A rota
+ *   responde 400.
+ *
+ * A diferença entre `ignored` e erro importa mais do que parece: plataforma
+ * que desliga o endpoint sozinha por taxa de falha (a Bask desliga com 50% em
+ * 24 h) trataria um 400 de "evento que não usamos" como falha nossa, e o
+ * endpoint inteiro cairia por causa de um evento irrelevante.
+ */
 export type AdapterResult =
   | { ok: true; purchase: NormalizedPurchase }
+  | { ok: true; statusUpdate: StatusUpdate }
+  | { ok: true; ignored: string }
   | { ok: false; error: string }
 
 export type WebhookAdapter = {

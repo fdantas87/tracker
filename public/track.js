@@ -109,6 +109,22 @@
   var STRIPE_HOSTS = ["buy.stripe.com"]
   var WHATSAPP_HOSTS = ["wa.me", "api.whatsapp.com", "web.whatsapp.com"]
 
+  // Os únicos parâmetros de URL que viajam no event_source_url (ver
+  // sourceUrl()). Campanha e click id, e nada mais.
+  var URL_PARAMS_KEPT = [
+    "utm_source",
+    "utm_medium",
+    "utm_campaign",
+    "utm_term",
+    "utm_content",
+    "fbclid",
+    "gclid",
+    "gbraid",
+    "wbraid",
+    "ttclid",
+    "msclkid",
+  ]
+
   // ---------------------------------------------------------------------
   // Utilidades de cookie / storage
   // ---------------------------------------------------------------------
@@ -632,6 +648,30 @@
     }
   }
 
+  /**
+   * A URL da página SEM a query string, a não ser campanha e click id.
+   *
+   * O event_source_url vai para o nosso banco e para o Meta, e a query string
+   * de terceiros carrega o que não deve sair dali: a página de obrigado da Bask
+   * põe na URL o nome dos produtos comprados (o medicamento), e formulário mal
+   * feito põe email. As UTMs já viajam em campos próprios do corpo e o click id
+   * do Meta já vem do cookie _fbc, então nada de atribuição se perde. O #hash
+   * também sai.
+   */
+  function sourceUrl() {
+    try {
+      var url = new URL(location.href)
+      var kept = new URLSearchParams()
+      url.searchParams.forEach(function (value, key) {
+        if (URL_PARAMS_KEPT.indexOf(key.toLowerCase()) !== -1) kept.append(key, value)
+      })
+      var query = kept.toString()
+      return url.origin + url.pathname + (query ? "?" + query : "")
+    } catch {
+      return location.origin + location.pathname
+    }
+  }
+
   function track(eventName, params) {
     // A inicialização virou assíncrona (espera a config e o identify), então
     // um track() chamado cedo demais precisa ser guardado — antes ele sumia
@@ -647,7 +687,7 @@
       event_id: eventId,
       event_name: eventName,
       trck_user_id: trckUserId,
-      event_source_url: location.href,
+      event_source_url: sourceUrl(),
       // O instante REAL do evento. Com a fila, o envio pode acontecer 15
       // minutos depois, e sem isto o Meta receberia a hora do envio — jogando
       // a atribuição pra frente.

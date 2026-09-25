@@ -91,6 +91,8 @@ apps/tracking.negou.net/
 │   ├── crypto/hash.ts                      # ✅ fase 5 — normalização + SHA-256 do Meta
 │   ├── webhooks/adapters/{index,types,perfectpay}.ts  # ✅ fase 7 — formato normalizado por plataforma
 │   ├── webhooks/adapters/stripe.ts         # ✅ Stripe — tradução + assinatura HMAC (server-only)
+│   ├── webhooks/status.ts                  # ✅ Bask (etapa A) — resolveStatus: a venda nunca volta para pending
+│   ├── integrations/bask-bridge.ts         # ✅ Bask — gera a ponte dataLayer -> track.js (SEM server-only)
 │   └── dispatch/purchase-dispatch.ts       # ✅ fase 7 — Purchase pro Meta + GA4
 ├── components/
 │   ├── ui/                                 # ✅ shadcn (button, card, badge, separator, switch, sidebar, sheet, dropdown-menu, input, label, alert, tooltip, skeleton, table, popover, chart)
@@ -104,6 +106,7 @@ apps/tracking.negou.net/
 │   │                                       # ✅ fase 8c — geo-view (dona da vista do mapa), world-map,
 │   │                                       #    world-map-impl, ranking-chips
 │   ├── integrations/{integration-card,stripe-card}.tsx  # ✅ Stripe — cards e formulário de credenciais
+│   ├── integrations/bask-dialog.tsx        # ✅ Bask — passos de instalação + código da ponte
 │   ├── dashboard-sidebar.tsx               # ✅ fase 3 — navegação (drawer no celular, sidebar no desktop)
 │   ├── user-menu.tsx                       # ✅ fase 3 — conta + sair
 │   ├── page-header.tsx                     # ✅ fase 3 — cabeçalho e placeholder de fase
@@ -216,6 +219,10 @@ Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) 
 - **CORS com allowlist fechada e comparação exata.** Nada de `*` e nada de `endsWith(".negou.net")` — `negou.net.site-do-atacante.com` passaria no endsWith. Tem teste com esse domínio exato.
 - **Sem cookie entre domínios.** O `track.js` lê o que precisa (trck_user_id, `_fbp`/`_fbc`, `_ga`, `_ga_<id>`) no próprio site e manda tudo explicitamente no corpo. Isso dispensa `Access-Control-Allow-Credentials` e toda a fragilidade de cookie cross-site — menos superfície e menos coisa pra quebrar quando navegador mudar política.
 - **Cross-domain é por URL.** O `track.js` decora automaticamente links de checkout (PerfectPay) com `?tuid=` e links de WhatsApp com o id dentro do texto da mensagem, inclusive em links criados depois (MutationObserver). É isso que permite casar a compra com a visita na fase 7.
+- **`event_source_url` sem query string** (2026-09-24): só UTMs e click ids
+  sobrevivem (`sourceUrl()` / `URL_PARAMS_KEPT` no `track.js`). A query de
+  terceiros carrega o que não deve sair da página — nome de medicamento na tela
+  de obrigado da Bask, email em formulário mal feito. Ver "Integração Bask".
 - **`keepalive: true` no envio.** O InitiateCheckout dispara um instante antes de o navegador sair da página; sem keepalive a requisição é cancelada no meio e o evento se perde justo no passo mais valioso do funil.
 - **Rate limit no próprio Postgres, não em Redis.** O contador precisa ser compartilhado entre instâncias: cada requisição pode cair numa função serverless diferente, e contador em memória nunca soma — o atacante só precisa bater em instâncias distintas. A escolha clássica seria Redis, mas seria mais um serviço, mais uma conta e mais duas credenciais; o Postgres do Supabase já existe, já é compartilhado e já é consultado nesses mesmos endpoints. Uma chamada atômica (`bump_rate_limit`, na migration `..._rate_limits.sql`) resolve numa ida só ao banco. Em qualquer falha do banco a decisão é **deixar passar**: limitador com problema não pode derrubar a captura do site inteiro — verificado com a função ainda inexistente, os endpoints seguiram respondendo 200.
 
@@ -246,7 +253,12 @@ Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) 
 - **Aqui o GA4 ENTRA.** Esta é a conversão que nasce fora do navegador — exatamente o caso de uso do Measurement Protocol. Reusa o `client_id` e o `session_id` capturados na visita, pra a compra cair na sessão certa em vez de virar tráfego direto órfão.
 - **Vinculação em ordem de confiança:** `trck_user_id` (veio da URL do checkout, vínculo direto) → email (hash) → telefone (hash) → nenhum. Sem vínculo a compra é gravada mesmo assim: perder a venda por não saber a origem seria muito pior do que registrá-la sem atribuição. `match_method` e `match_found` guardam o que aconteceu.
 - **Responde 200 sempre que entendeu o payload**, mesmo se o disparo falhar depois. Plataforma de pagamento reenvia webhook que não recebeu 2xx, e loop de reenvio por erro nosso só piora. O que deu errado fica em `response_meta`/`response_ga4`.
+- **Purchase só com pagamento confirmado** — ver a diretriz em "Convenções → Código". A rota só dispara quando o status FINAL da linha é `approved`.
+- **O adaptador tem quatro respostas, não duas** (`AdapterResult` em `lib/webhooks/adapters/types.ts`): a venda inteira (upsert), **só a troca de status** (`statusUpdate`, um UPDATE de `status`/`platform_status` — para reembolso e disputa que chegam só com ids e, pelo upsert, apagariam email, nome e valor), **ignorado** (evento legítimo fora do escopo, responde **200**) e erro (400). A diferença entre ignorado e erro existe por causa de plataforma que desliga o endpoint por taxa de falha — a Bask desliga com 50% em 24 h, e um 400 de "evento que não usamos" derrubaria o endpoint inteiro.
+- **A venda nunca volta para `pending`** (`resolveStatus`, `lib/webhooks/status.ts`). Plataforma com entrega fora de ordem (a Bask documenta isso) pode mandar o "pedido criado" depois do "pagamento confirmado"; sem a regra, o upsert rebaixaria a venda aprovada. Sair de `refunded`/`chargeback` para `approved` **não** é bloqueado, de propósito: disputa ganha pelo vendedor é legítima.
+- **`external_id` e o registro em `events_log` usam o `trck_user_id` do visitante casado**, não só o do payload. Antes, venda casada por email ia ao Meta sem `external_id` e sumia da tela de Eventos.
 - **Token no header `x-webhook-token` ou na querystring** (nem toda plataforma deixa configurar header). A URL completa nunca é logada, porque carrega o token.
+- **A assinatura do Stripe é decidida por `adapter.platform`, não pelo segmento da URL.** O `getAdapter` ignora maiúsculas; comparar a string crua deixava `/compra/Stripe` usar o adaptador do Stripe **sem conferir a assinatura** (só o token global era exigido). Corrigido em 2026-09-24.
 
 ---
 
@@ -795,6 +807,106 @@ assinatura injetaria venda falsa no painel e no Meta.
 
 ---
 
+## Integração Bask (rota + navegador implementados; webhook aguardando o add-on)
+
+A Bask (telessaúde: LP, questionário, checkout, assinatura/refil) é mais uma
+fonte, igual PerfectPay e Stripe. O tracker só **lê** conversão, valor e
+cliente; nada de tratamento, receita ou chat.
+
+- **A doc da Bask é fechada.** `docs.bask.health/*` redireciona para login. A
+  fonte usada é o MCP da Bask (`claude mcp` → `bask`, escopo de usuário, OAuth
+  com a conta do cliente) mais o template público
+  `github.com/bask-labs/bask-webhooks-vercel`. O material do MCP é interno da
+  Bask: usar como base de raciocínio, **nunca copiar texto dele** para o repo,
+  a UI ou mensagens.
+- **Webhooks são um add-on PAGO da Bask, e a loja atual não tem** (conferido em
+  2026-09-24 pelo MCP: feature `webhooks` desligada). Pay-as-you-go a
+  US$ 0,005 por evento entregue, com 30 dias de teste grátis; o plano Starter
+  (US$ 499/mês + US$ 0,001) só compensa acima de ~125 mil eventos/mês. Enquanto
+  o add-on não estiver ativo, **a especificação do payload também fica oculta no
+  MCP** — é só depois de ligar que dá para escrever o adaptador contra o formato
+  real. Sem webhook não há Purchase da Bask no tracker: o navegador não tem como
+  provar pagamento confirmado (ver a diretriz em "Convenções → Código").
+- **"Global JavaScript" não serve para carregar o `track.js`.** O script por
+  pergunta do questionário roda num sandbox que recusa `fetch`, `sendBeacon`,
+  script externo, cookie e `localStorage` — foi desenhado para impedir que PHI
+  saia da página. **O caminho é o GTM**, que a loja tem no plano: a Bask carrega
+  o container do cliente no questionário e empurra eventos no `dataLayer`
+  (telas, respostas, autenticação, escolha de plano, checkout, compra). Não há
+  sequência nem payload garantidos, e o `dataLayer` pode conter dado de saúde —
+  a ponte no GTM lê só o nome do evento e email/telefone para o `identify`,
+  **nunca** repassa o payload.
+- **A Bask tem integração nativa de Meta Pixel (com CAPI opcional) e de GA4.**
+  Se ficarem ligadas com o mesmo pixel/propriedade do tracker, tudo conta em
+  dobro, sem `event_id` em comum. Um dono só por destino.
+- **Atribuição da Bask:** ela guarda 5 UTMs, um click id e um código de
+  afiliado; `src`/`source` viram `utm_source` lá. Nunca carregar o `trck_user_id`
+  em `src` ou em UTM num link para a Bask — poluiria a atribuição dela. Parâmetro
+  desconhecido (como `?tuid=`) é simplesmente ignorado, então é seguro.
+- **Renovação existe no modelo de dados:** plano de assinatura ("membership")
+  cobra no mesmo tratamento a cada ciclo, e o pedido tem `isRefillOrder`. Se o
+  webhook traz esse sinal, só se confirma com o add-on ligado.
+- **A peça do navegador é uma ponte, não código no `track.js`.**
+  `lib/integrations/bask-bridge.ts` gera o JS que o cliente cola numa tag HTML
+  do GTM (ou no Global JavaScript), exibido em Integrações → Plataformas →
+  Integrar plataforma → Bask. Ele carrega o `track.js` do deploy e embrulha o
+  `dataLayer.push`. A tradução foi tirada do bundle público do questionário
+  (2026-09-24), não suposta: `gtag("event","signup")` → `Lead`; `add_to_cart` →
+  `InitiateCheckout` (uma vez); `purchase` da tela de obrigado →
+  `SubmitApplication` com valor, moeda e `order_id` — **nunca** `Purchase`,
+  porque é checkout enviado, não pagamento. Três detalhes que não são estéticos:
+  - **`signup` chega como objeto `arguments` do gtag, não como objeto com
+    `event`.** Um gatilho de "evento personalizado" do GTM não o enxerga — por
+    isso a ponte embrulha o `push` em vez de usar gatilhos.
+  - **O `dataLayer` da Bask leva a resposta inteira do questionário**
+    (`the_basics`, `input_group`), o medicamento nos `items` e os dados do
+    paciente mesclados no `purchase`. A ponte lê campo a campo; o payload nunca
+    sai.
+  - **ES5 de propósito**: validador antigo de tag do GTM recusa `const`/arrow.
+- **O `event_source_url` perdeu a query string (vale para todos os sites).**
+  `sourceUrl()` no `track.js` mantém só UTMs e click ids (`URL_PARAMS_KEPT`) e
+  tira o `#hash`. Motivo concreto: a tela de obrigado da Bask põe na URL o nome
+  e o preço dos produtos comprados, e isso iria para o banco e para o Meta em
+  todo evento disparado ali. As UTMs já viajam em campos próprios e o `fbclid`
+  vira `_fbc`, então nenhuma atribuição se perde.
+- **Na loja atual, o GA4 nativo da Bask usa o MESMO id do tracker.** O dono
+  escolhido é o tracker; o cliente precisa tirar o id do card Google Analytics
+  da Bask, ou cada página conta duas vezes. O Meta Pixel nativo já está
+  desligado.
+- **Enquanto o add-on Webhooks não for ligado, nenhuma venda da Bask chega a
+  lugar nenhum** — nem em Vendas, nem como Purchase no Meta ou no GA4. Foi
+  decisão do usuário adiar; o sinal de fundo de funil que resta é o
+  `SubmitApplication`.
+- **Duas peças, nenhuma pesada:** (1) webhook da Bask em
+  `/api/webhook/compra/bask` — a fonte do dinheiro e do email do paciente, que
+  depende do add-on; (2) `track.js` nas páginas da Bask via GTM — sem ele a
+  venda chega sem `fbp`/`fbc`/IP/UTM e o Meta casa mal.
+- **Sem credencial nova.** A Bask aceita header customizado, então o token
+  global vai em `x-webhook-token` e nunca na URL. Não há HMAC do lado deles.
+- **O que a Bask documenta e mudou a rota para todas as plataformas:** entrega
+  at-least-once **sem ordem garantida** (daí `resolveStatus`) e **desligamento
+  automático do endpoint com 50% de falha em 24 h** (daí o resultado
+  "ignorado" responder 200). Ver "Webhook de compra".
+- **Tradução decidida com o usuário:** `paymentSucceeded` → `Purchase`/`purchase`
+  (inclusive renovação e refil — o Meta não tem evento padrão de renovação);
+  `newOrder` → `SubmitApplication` no Meta e `add_payment_info` no GA4, nunca
+  Purchase; reembolso/cancelamento/disputa só trocam status. Nome e id do
+  produto (o medicamento) **não** vão para Meta/GA4 (`omitProductFromAds`).
+- **Renovação no Ads Manager aparece como compra não atribuída**: a janela do
+  Meta (7 dias de clique) não alcança uma cobrança de 30 dias depois. O vínculo
+  anúncio → receita recorrente vive no GA4 (mesmo `client_id`) e no painel
+  (compra → visitante → UTM da primeira visita, fase 9).
+- **Portões que continuam abertos:** (1) com o add-on ligado — qual id aparece
+  em todos os eventos de pedido e pagamento (a armadilha `cs_`/`pi_` do
+  Stripe; no modelo da Bask pagamento e pedido são entidades separadas, ligadas
+  N:N, então o provável é chavear a venda pelo id do PAGAMENTO e tratar o
+  `newOrder` sem linha própria em `purchases`), se o valor vem em dólar
+  (o modelo guarda decimal em dólar) e o campo de renovação; (2) com o GTM
+  ligado — os nomes reais dos eventos do `dataLayer`, vistos no modo Preview, e
+  se a página do questionário tem CSP que barre o domínio do tracker.
+
+---
+
 ## Ícone de status (sidebar)
 
 O ícone fixo no rodapé da sidebar é o lugar **único** para aviso técnico do
@@ -1064,6 +1176,7 @@ histórico de incidentes) e `implementation_plan.md`.
 
 - Server Actions para CRUD que só o próprio dashboard usa; Route Handlers só para os 3 contratos externos (captura, webhook, config pública) — ver estrutura acima
 - Sempre checar a documentação oficial (Meta Graph API, GA4) antes de fixar uma versão/endpoint — a versão da Graph API do Meta vive numa única constante (`META_GRAPH_API_VERSION`), fácil de atualizar
+- **Purchase = pagamento CONFIRMADO. Sempre, em toda plataforma, sem exceção** (diretriz do usuário, 2026-09-24). O `Purchase` do Meta e o `purchase` do GA4 só saem quando o dinheiro entrou: `approved` no PerfectPay, `paid`/`async_payment_succeeded` no Stripe, `paymentSucceeded` na Bask. Pedido criado, boleto/Pix gerado, cartão só autorizado ou checkout enviado **nunca** viram Purchase — se merecem sinal, vão como outro evento padrão (na Bask, o `newOrder` vira `SubmitApplication` no Meta e `add_payment_info` no GA4). Renovação de assinatura e refil pagos **são** Purchase: o Meta não tem evento padrão de renovação, e `Subscribe` é só o início da assinatura. Ao escrever adaptador novo, o único caminho para `status: "approved"` é a confirmação do pagamento.
 
 ### Validação obrigatória antes de concluir
 
@@ -1128,6 +1241,7 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - **Criar o projeto na Vercel** (Import do repo `fdantas87/negou`, Root Directory = `apps/tracking.negou.net`), conforme `VERCEL_DEPLOY.md` da raiz — pode esperar até a fase 10, ou ser feito antes se quiser preview deploy fase a fase. *(Obsoleto para clientes novos: o botão do README faz isso. Ver "Deploy 1-clique".)*
 - **Deploy 1-clique — o que falta, e é só do usuário:** (1) **revogar o PAT do GitHub** que está em texto puro na URL do remote em `.git/config` e reconfigurar sem credencial; (2) rodar o `supabase/setup.sql` num projeto Supabase **novo**, do zero, e conferir com `verify_phase2.sql` — é o gate: não publicar um botão que aponta para um SQL não testado; (3) tornar o repo `fdantas87/tracker` público (o botão exige repo público) depois de decidir sobre `CLAUDE.md` e `implementation_plan.md`; (4) abrir a URL do botão uma vez e conferir que os 7 campos aparecem com os 3 defaults preenchidos.
 - **País do telefone pela moeda — o que falta:** (1) publicar o código; (2) **só depois** rodar `20260923130000_remove_default_phone_country.sql` no SQL Editor — ordem inversa da habitual, porque o código antigo ainda lê e grava a coluna (salvar a aba Delay falharia e `getDispatchConfig()` cairia no padrão, perdendo modo, janela e `test_event_code`); (3) em cada deploy de cliente **fora do Brasil**, preencher `TRACKING_DEFAULT_PHONE_COUNTRY` na Vercel e redeployar.
+- **Bask — o que falta, e é do usuário/cliente:** (1) publicar o código novo (o `track.js` com `sourceUrl()` e o diálogo); (2) na Bask, tirar o id do GA4 do card Google Analytics (é o mesmo do tracker) e manter o Meta Pixel nativo desligado; (3) no container GTM cadastrado na Bask, criar a tag "HTML personalizado" com o código de Integrações → Integrar plataforma → Bask, acionada em todas as páginas, e publicar; (4) percorrer um checkout de teste em janela anônima e conferir Lead, InitiateCheckout e SubmitApplication na tela Eventos; (5) antes do lançamento, verificar o domínio `intake.` na Bask (hoje "não verificado"). **Adiado por decisão do usuário:** ligar o add-on Webhooks (pay-as-you-go, 30 dias grátis) — só aí dá para escrever o adaptador contra o payload real e ter Purchase da Bask.
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
 
 ---
@@ -1185,6 +1299,74 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-09-24:** Integração Bask — peça do navegador. Com o MCP da Bask
+  conectado, a pesquisa trocou três premissas do plano: (1) webhook é add-on
+  pago e a loja não tem — o usuário decidiu adiar, então não há adaptador ainda;
+  (2) o "Global JavaScript" por pergunta roda num sandbox que recusa rede e
+  script externo, então o caminho é o GTM, que a loja tem; (3) o GA4 nativo da
+  Bask usa o mesmo id do tracker, e o usuário escolheu o tracker como dono.
+  Arquivos: `lib/integrations/bask-bridge.ts` e
+  `components/integrations/bask-dialog.tsx` (novos), `platform-manager.tsx`
+  (item "Bask"; o "Todas configuradas" saiu, porque a Bask está sempre
+  disponível) e `public/track.js` (`sourceUrl()`). Nenhuma migration,
+  dependência ou variável nova.
+  - **Os eventos do `dataLayer` foram lidos no bundle público do questionário**
+    (os 24 chunks da página e os 37 carregados sob demanda), não supostos. Foi
+    isso que revelou os dois defeitos que uma ponte ingênua teria: o `signup`
+    chega como `arguments` do gtag (invisível para gatilho do GTM) e o
+    `dataLayer` carrega respostas de saúde e dados do paciente.
+  - **Achado com efeito em todo cliente:** a tela de obrigado da Bask põe nome e
+    preço dos produtos na URL, e o `track.js` mandava `location.href` inteiro
+    como `event_source_url`. Agora só UTMs e click ids passam.
+  - Conferido ao vivo, só leitura: o questionário responde em
+    `intake.viventra.health`, a página não manda CSP, o CORS do tracker do
+    cliente já libera essa origem, e a LP já carrega o `track.js` no mesmo
+    domínio raiz (o cookie de identidade atravessa sozinho).
+  - Verificado: `npm run build` verde, lint limpo nos 4 arquivos,
+    `node --check` no `track.js` e **24/24 no teste de mesa** — a ponte rodando
+    num `vm` contra a sequência real de pushes da Bask (Lead e InitiateCheckout
+    uma vez só, SubmitApplication uma vez por pedido e só com valor/moeda/
+    `order_id`, nenhum Purchase, nenhum dado de saúde nas chamadas, evento
+    anterior à ponte recuperado, reexecução sem gancho duplo, entradas lixo sem
+    quebrar) e o `sourceUrl()` real extraído do arquivo.
+  - **Não verificado:** a tag publicada no GTM do cliente e o fluxo em janela
+    anônima até a tela de obrigado — depende do cliente publicar a tag. O
+    diálogo novo não foi aberto num navegador.
+- **2026-09-24:** Integração Bask — planejada, e a Etapa A (a parte que não
+  depende da doc fechada da Bask) implementada. Arquivos: `lib/webhooks/status.ts`
+  (novo), `lib/webhooks/adapters/types.ts`, `app/api/webhook/compra/[platform]/route.ts`
+  e `lib/dispatch/purchase-dispatch.ts`. Nenhuma migration, dependência ou
+  variável nova. Ver "Integração Bask" e "Webhook de compra".
+  - **Diretriz nova do usuário:** Purchase só com pagamento confirmado, sempre,
+    em toda plataforma (em "Convenções → Código"). PerfectPay e Stripe já
+    cumpriam — conferido.
+  - **Falha de segurança achada na leitura e corrigida:** `/compra/Stripe`, com
+    maiúscula, caía no adaptador do Stripe (o `getAdapter` ignora caixa) mas
+    pulava a verificação de assinatura, que comparava o segmento cru da URL. Só
+    o token global era exigido.
+  - **Defeito de correspondência corrigido:** venda casada por email ia ao Meta
+    sem `external_id` e não entrava em `events_log`, porque os dois olhavam só o
+    `trck_user_id` do payload. Na Bask, onde o checkout não repassa o id, seria
+    toda venda.
+  - **Do plano, uma regra caiu no desenho:** travar também `refunded` →
+    `approved`. Disputa ganha pelo vendedor é exatamente essa transição, e
+    travá-la congelaria como chargeback uma receita que voltou. Ficou só "nunca
+    volta para `pending`".
+  - Verificado: `tsc` e lint limpos nos 4 arquivos, `npm run build` verde,
+    **12/12 no teste de mesa** de `resolveStatus` e **12/12 no teste ao vivo**
+    contra o servidor local e o banco real: 401 sem token; `/compra/Stripe` e
+    `/compra/stripe` agora os dois barrados no portão da assinatura
+    (`stripe_nao_configurado`, já que não há Stripe conectado — antes, a
+    maiúscula chegava ao adaptador); status desconhecido do PerfectPay com 400
+    e nada gravado; pendente gravado sem disparo; **pendente atrasado sobre venda
+    aprovada mantendo `approved`** e `platform_status`; approved → refunded
+    seguindo normal. A linha de teste foi apagada no fim, e nenhum passo chegou
+    ao Meta (a trava `meta_event_id` estava preenchida antes do único caso em
+    que o status final era `approved`).
+  - **Não verificado:** o caminho `statusUpdate` e a omissão do produto não têm
+    quem os use ainda — o adaptador da Bask (Etapa B) é o primeiro. O
+    `external_id` do visitante casado foi conferido por leitura e tipo, não por
+    um disparo real (disparar exigiria mandar compra ao Meta de produção).
 - **2026-09-24:** Aviso técnico saiu da tela de Integrações e foi para o ícone de
   status da sidebar, que passou de verde/vermelho para verde/âmbar/vermelho.
   Arquivos novos: `lib/health/{types,checks}.ts`; alterados

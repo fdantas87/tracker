@@ -20,7 +20,11 @@ import {
   getStripeWebhookSecret,
   verifyStripeSignature,
 } from "@/lib/webhooks/adapters/stripe"
-import type { NormalizedPurchase } from "@/lib/webhooks/adapters/types"
+import type {
+  NormalizedPurchase,
+  StatusUpdate,
+} from "@/lib/webhooks/adapters/types"
+import { resolveStatus } from "@/lib/webhooks/status"
 
 const MAX_BODY_BYTES = 256_000
 
@@ -33,11 +37,16 @@ const MAX_BODY_BYTES = 256_000
  * 1. valida o token do webhook (o nosso, não o da plataforma)
  * 1.5. quando a plataforma assina a requisição (Stripe), confere a assinatura
  *    sobre o corpo BRUTO — é a prova criptográfica de que o payload veio de lá
- * 2. traduz o payload pelo adaptador da plataforma
- * 3. grava/atualiza a compra de forma idempotente
+ * 2. traduz o payload pelo adaptador da plataforma — que pode devolver a venda
+ *    inteira, só uma troca de status (reembolso/disputa com ids apenas) ou
+ *    "ignorado" (evento legítimo fora do escopo, respondido com 200)
+ * 3. grava/atualiza a compra de forma idempotente, sem deixar o status voltar
+ *    para pendente (entrega fora de ordem — ver lib/webhooks/status.ts)
  * 4. tenta casar com um visitante (trck_user_id -> email -> telefone)
  * 5. se a venda está aprovada e ainda não foi disparada, manda o Purchase pro
- *    Meta e pro GA4 — uma única vez, garantido por uma trava atômica no banco
+ *    Meta e pro GA4 — uma única vez, garantido por uma trava atômica no banco.
+ *    Purchase = pagamento CONFIRMADO, sempre, em toda plataforma: pedido
+ *    criado, boleto gerado ou cartão só autorizado nunca viram Purchase.
  *
  * Sempre responde 200 quando o payload foi entendido, mesmo em caso de erro
  * interno no disparo: plataforma de pagamento reenvia webhook que não recebeu
@@ -118,7 +127,11 @@ export async function POST(
     return Response.json({ error: "payload_invalido" }, { status: 400 })
   }
 
-  if (platform === "stripe") {
+  // `adapter.platform`, não o segmento cru da URL: o `getAdapter` ignora
+  // maiúsculas, então `/compra/Stripe` também cai no adaptador do Stripe — e
+  // comparar a string da URL deixava essa variante passar SEM conferir a
+  // assinatura. Quem decide se há assinatura é o adaptador que vai ler o corpo.
+  if (adapter.platform === "stripe") {
     // Aqui a autenticação é criptográfica, não um token compartilhado: só quem
     // tem o signing secret consegue produzir esta assinatura. Falha fechado —
     // sem secret configurado, nenhum webhook é aceito.
@@ -146,14 +159,41 @@ export async function POST(
     return Response.json({ error: "payload_nao_reconhecido", detail: parsed.error }, { status: 400 })
   }
 
+  // Evento legítimo que o tracker não trata: 200, não 400. Ver o comentário
+  // de `AdapterResult` — plataforma que desliga o endpoint por taxa de falha
+  // contaria um 400 daqui como defeito nosso.
+  if ("ignored" in parsed) {
+    return Response.json({ ok: true, ignored: true, reason: parsed.ignored }, { status: 200 })
+  }
+
+  if ("statusUpdate" in parsed) {
+    return applyStatusUpdate(parsed.statusUpdate)
+  }
+
   const purchase = parsed.purchase
   // O país do telefone vem da moeda DESTA transação, não de um valor fixo do
   // deploy: o mesmo cliente pode vender em BRL e em USD.
   const phoneCountry = obterPaisDaMoeda(purchase.currency)
 
   try {
+    // O que já estava gravado para esta transação. Serve a duas coisas: o
+    // status não regredir (ver lib/webhooks/status.ts) e o 4º passo do
+    // findVisitor, que preserva o vínculo com a visita.
+    const { data: anterior } = await supabase
+      .from("purchases")
+      .select("status, platform_status, trck_user_id, match_method")
+      .eq("transaction_id", purchase.transactionId)
+      .maybeSingle()
+
+    const final = resolveStatus(
+      anterior
+        ? { status: String(anterior.status), platformStatus: String(anterior.platform_status) }
+        : null,
+      { status: purchase.status, platformStatus: purchase.platformStatus }
+    )
+
     // --- 3. vinculação com o visitante -------------------------------------
-    const match = await findVisitor(purchase, phoneCountry)
+    const match = await findVisitor(purchase, phoneCountry, anterior)
 
     // --- 4. gravação idempotente -------------------------------------------
     // `transaction_id` é UNIQUE. O upsert atualiza a linha quando a mesma
@@ -182,9 +222,9 @@ export async function POST(
         // falha e a compra deixa de ser registrada.
         payment_method: purchase.paymentMethod,
         platform_payment_method: purchase.platformPaymentMethod,
-        status: purchase.status,
+        status: final.status,
         platform: adapter.platform,
-        platform_status: purchase.platformStatus,
+        platform_status: final.platformStatus,
         utm_source: purchase.utmSource,
         utm_medium: purchase.utmMedium,
         utm_campaign: purchase.utmCampaign,
@@ -228,9 +268,12 @@ export async function POST(
     }
 
     // --- 5. disparo, uma única vez -----------------------------------------
-    if (purchase.status !== "approved") {
+    // Decide pelo status FINAL, não pelo do payload: um "pendente" atrasado
+    // sobre uma venda já aprovada não dispara nada, e a trava abaixo impede o
+    // reenvio de qualquer jeito.
+    if (final.status !== "approved") {
       return Response.json(
-        { ok: true, status: purchase.status, dispatched: false },
+        { ok: true, status: final.status, dispatched: false, ...(final.mantido ? { status_mantido: true } : {}) },
         { status: 200 }
       )
     }
@@ -251,7 +294,7 @@ export async function POST(
 
     if (!claimed) {
       return Response.json(
-        { ok: true, status: purchase.status, dispatched: false, reason: "ja_enviado" },
+        { ok: true, status: final.status, dispatched: false, reason: "ja_enviado" },
         { status: 200 }
       )
     }
@@ -270,13 +313,75 @@ export async function POST(
     return Response.json(
       {
         ok: true,
-        status: purchase.status,
+        status: final.status,
         dispatched: true,
         matched: Boolean(match.visitor),
         match_method: match.method,
       },
       { status: 200 }
     )
+  } catch (error) {
+    return Response.json(
+      {
+        error: "erro_interno",
+        detail: error instanceof Error ? error.message : "desconhecido",
+      },
+      { status: 500 }
+    )
+  }
+}
+
+/**
+ * Troca só o status de uma venda já gravada (reembolso, cancelamento, disputa
+ * que chegam só com ids). Um UPDATE de duas colunas, e não o upsert da linha
+ * inteira — é o que impede um evento magro de apagar email, nome e valor.
+ *
+ * Venda desconhecida responde 200 "ignorado": é o reembolso de uma compra de
+ * antes da integração, e reenviar não a faria aparecer. Nunca dispara nada
+ * para o Meta ou o GA4.
+ */
+async function applyStatusUpdate(update: StatusUpdate): Promise<Response> {
+  try {
+    const supabase = createServiceClient()
+
+    const { data: atual } = await supabase
+      .from("purchases")
+      .select("status, platform_status")
+      .eq("transaction_id", update.transactionId)
+      .maybeSingle()
+
+    if (!atual) {
+      return Response.json(
+        { ok: true, ignored: true, reason: "venda_nao_encontrada" },
+        { status: 200 }
+      )
+    }
+
+    const final = resolveStatus(
+      { status: String(atual.status), platformStatus: String(atual.platform_status) },
+      { status: update.status, platformStatus: update.platformStatus }
+    )
+
+    if (final.mantido) {
+      return Response.json(
+        { ok: true, status: final.status, status_mantido: true },
+        { status: 200 }
+      )
+    }
+
+    const { error } = await supabase
+      .from("purchases")
+      .update({ status: final.status, platform_status: final.platformStatus })
+      .eq("transaction_id", update.transactionId)
+
+    if (error) {
+      return Response.json(
+        { error: "persist_failed", detail: error.message },
+        { status: 500 }
+      )
+    }
+
+    return Response.json({ ok: true, status: final.status }, { status: 200 })
   } catch (error) {
     return Response.json(
       {
@@ -313,7 +418,8 @@ type VisitorMatch = {
  */
 async function findVisitor(
   purchase: NormalizedPurchase,
-  phoneCountry: string
+  phoneCountry: string,
+  anterior: { trck_user_id: unknown; match_method: unknown } | null
 ): Promise<VisitorMatch> {
   const supabase = createServiceClient()
 
@@ -351,14 +457,10 @@ async function findVisitor(
   // 4. Vínculo preservado: esta transação já foi gravada antes com um
   // visitante? Então o webhook atual só não trouxe o dado — ele não desfez o
   // vínculo. Mantém o que já existia, inclusive o `match_method` original,
-  // que continua sendo a verdade de COMO a venda foi casada.
-  const { data: anterior } = await supabase
-    .from("purchases")
-    .select("trck_user_id, match_method")
-    .eq("transaction_id", purchase.transactionId)
-    .maybeSingle()
-
-  if (anterior?.trck_user_id) {
+  // que continua sendo a verdade de COMO a venda foi casada. A linha anterior
+  // já foi lida pelo POST (ela também decide o status), então não há segunda
+  // consulta aqui.
+  if (typeof anterior?.trck_user_id === "string" && anterior.trck_user_id) {
     const { data: visitor } = await supabase
       .from("visitors")
       .select("*")

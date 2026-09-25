@@ -1,9 +1,10 @@
 "use client"
 
 import * as React from "react"
-import { Plus, CreditCard, ShoppingBag } from "lucide-react"
+import { Plus, CreditCard, ShoppingBag, Stethoscope } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import { BaskDialog } from "./bask-dialog"
 import { StripeFormDialog } from "./stripe-card"
 import type { StripeAccountRow } from "@/lib/settings/queries"
 
@@ -15,6 +16,7 @@ export function PlatformManager({
   hasWebhookToken: boolean 
 }) {
   const [stripeOpen, setStripeOpen] = React.useState(false)
+  const [baskOpen, setBaskOpen] = React.useState(false)
   const isStripeConfigured = Boolean(stripeAccount?.hasSecretKey && stripeAccount?.hasWebhookSecret)
 
   return (
@@ -39,15 +41,18 @@ export function PlatformManager({
               PerfectPay (Gere token no Webhook)
             </DropdownMenuItem>
           )}
-          {isStripeConfigured && hasWebhookToken && (
-            <DropdownMenuItem disabled className="h-10 text-center justify-center">
-              Todas configuradas
-            </DropdownMenuItem>
-          )}
+          {/* Sempre disponível: a Bask não guarda credencial aqui, então não
+              há estado de "configurada" para esconder o item. */}
+          <DropdownMenuItem onSelect={() => setBaskOpen(true)} className="gap-2 cursor-pointer h-10">
+            <Stethoscope className="size-4" />
+            Bask
+          </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <StripeFormDialog 
+      <BaskDialog open={baskOpen} onOpenChange={setBaskOpen} />
+
+      <StripeFormDialog
         open={stripeOpen} 
         onOpenChange={setStripeOpen} 
         account={stripeAccount} 
