@@ -26,7 +26,7 @@ import {
  *
  * Cria ou atualiza o visitante. Chamado pelo track.js no primeiro carregamento
  * de cada página e sempre que o site souber quem é a pessoa
- * (`negou.identify({...})` ou um formulário enviado).
+ * (`thetrack.identify({...})` ou um formulário enviado).
  *
  * O que o CLIENTE manda: trck_user_id (se já tiver), fbp, fbc, cookies do GA,
  * UTMs, referrer e, quando existirem, dados de contato.

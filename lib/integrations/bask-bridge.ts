@@ -30,8 +30,8 @@ export function baskBridgeSnippet(trackerOrigin: string): string {
 
   // ES5 de propósito: validador de tag de GTM antigo recusa const/arrow.
   return `(function () {
-  if (window.__negouBask) return
-  window.__negouBask = true
+  if (window.__thetrackBask) return
+  window.__thetrackBask = true
 
   var TRACK_SRC = ${JSON.stringify(trackSrc)}
   if (!document.querySelector('script[src="' + TRACK_SRC + '"]')) {
@@ -41,14 +41,14 @@ export function baskBridgeSnippet(trackerOrigin: string): string {
     document.head.appendChild(tag)
   }
 
-  // O track.js cria window.negou ao executar; ate la, espera (teto de 15 s).
-  function withNegou(fn) {
-    if (window.negou) return fn(window.negou)
+  // O track.js cria window.thetrack ao executar; ate la, espera (teto de 15 s).
+  function withTracker(fn) {
+    if (window.thetrack) return fn(window.thetrack)
     var tries = 0
     var timer = setInterval(function () {
-      if (window.negou) {
+      if (window.thetrack) {
         clearInterval(timer)
-        fn(window.negou)
+        fn(window.thetrack)
       } else if (++tries > 150) {
         clearInterval(timer)
       }
@@ -75,7 +75,7 @@ export function baskBridgeSnippet(trackerOrigin: string): string {
     if (item[0] === "event" && item[1] === "signup") {
       if (sent.lead) return
       sent.lead = true
-      withNegou(function (negou) { negou.track("Lead") })
+      withTracker(function (tracker) { tracker.track("Lead") })
       return
     }
 
@@ -83,7 +83,7 @@ export function baskBridgeSnippet(trackerOrigin: string): string {
       if (sent.checkout) return
       sent.checkout = true
       var checkout = money(item.ecommerce)
-      withNegou(function (negou) { negou.track("InitiateCheckout", checkout) })
+      withTracker(function (tracker) { tracker.track("InitiateCheckout", checkout) })
       return
     }
 
@@ -101,9 +101,9 @@ export function baskBridgeSnippet(trackerOrigin: string): string {
         first_name: ecommerce.firstName || ecommerce.first_name,
         last_name: ecommerce.lastName || ecommerce.last_name
       }
-      withNegou(function (negou) {
-        negou.identify(traits)
-        negou.track("SubmitApplication", data)
+      withTracker(function (tracker) {
+        tracker.identify(traits)
+        tracker.track("SubmitApplication", data)
       })
     }
   }

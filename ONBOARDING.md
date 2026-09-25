@@ -103,7 +103,7 @@ painel ainda pode ser corrigido no passo 5, sem redeploy; o do `<title>` não.
 > **`TRACKING_DEFAULT_PHONE_COUNTRY` vem `BR` — troque se o cliente não for do
 > Brasil.** Numa compra, o país do telefone sai da moeda da venda (BRL → BR,
 > USD → US, EUR → PT). Esta variável vale onde não há moeda: os formulários e o
-> `negou.identify()` do site, antes de qualquer compra. País errado aqui não dá
+> `thetrack.identify()` do site, antes de qualquer compra. País errado aqui não dá
 > erro nenhum — o hash do telefone só deixa de casar no Meta. Mudar depois
 > exige um novo deploy.
 

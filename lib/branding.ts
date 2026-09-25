@@ -10,15 +10,16 @@
  * ele é renderizado na tela. Nenhum segredo passa por aqui.
  *
  * Os defaults são GENÉRICOS de propósito: um deploy que esqueceu de configurar
- * mostra "Tracking", nunca a marca de outro cliente. Um default com a marca da
- * Negou seria pior do que nenhum, porque o erro passaria despercebido.
+ * mostra "Tracking", nunca a marca de outro cliente. Um default com a marca de
+ * um cliente específico seria pior do que nenhum, porque o erro passaria
+ * despercebido.
  */
 
-/** Nome completo, usado no <title> de todas as páginas. Ex.: "Negou Tracking". */
+/** Nome completo, usado no <title> de todas as páginas. Ex.: "TheTrack". */
 export const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME?.trim() || "Tracking"
 
 /**
- * Só a marca, usada no wordmark do painel e do login. Ex.: "Negou".
+ * Só a marca, usada no wordmark do painel e do login. Ex.: "TheTrack".
  *
  * Cai para o APP_NAME quando não configurada: um cliente que preencheu apenas
  * uma das duas variáveis continua vendo algo coerente, em vez de um espaço em
@@ -31,7 +32,8 @@ export const BRAND_NAME =
  * Título de página, no formato "Seção · Nome do app".
  *
  * Existe para o nome não ficar repetido em nove `page.tsx` — foi exatamente
- * essa repetição que deixou a marca da Negou espalhada pelo código.
+ * essa repetição que deixou a marca de um cliente específico espalhada pelo
+ * código.
  */
 export function pageTitle(secao?: string): string {
   return secao ? `${secao} · ${APP_NAME}` : APP_NAME

@@ -1,4 +1,4 @@
-# CLAUDE.md — tracking.negou.net
+# CLAUDE.md — TheTrack
 
 ## Projeto
 
@@ -21,14 +21,14 @@
 - **@supabase/ssr** + **@supabase/supabase-js** — sessão em cookies no App Router (ver "Autenticação e shell")
 - **Recharts** (fase 8a) e **react-simple-maps** + **d3-geo** + **world-atlas** (fase 8c) — instalados; o `world-atlas` é só o arquivo TopoJSON do mundo, embutido no bundle
 - **Sem Redis/Upstash** — o rate limit roda no próprio Postgres do Supabase (ver "Captura de eventos"), pra não acrescentar serviço nem credencial
-- **GitHub** para versionamento, **Vercel** para deploy (projeto próprio, root directory `apps/tracking.negou.net`, sem `vercel.json` — env vars só na dashboard da Vercel, seguindo `VERCEL_DEPLOY.md` da raiz do monorepo)
+- **GitHub** para versionamento, **Vercel** para deploy (projeto próprio, root directory `apps/tracking.seudominio.com`, sem `vercel.json` — env vars só na dashboard da Vercel, seguindo `VERCEL_DEPLOY.md` da raiz do monorepo)
 
 ---
 
 ## Arquitetura (visão-alvo; itens ainda não implementados marcados)
 
 ```
-apps/tracking.negou.net/
+apps/tracking.seudominio.com/
 ├── proxy.ts                                # ✅ fase 3 — refresh de sessão + guarda de rota (era "middleware.ts" antes do Next 16)
 ├── app/
 │   ├── (auth)/login/                       # ✅ fase 3 — page.tsx + login-form.tsx, único ponto de entrada, sem signup
@@ -216,7 +216,7 @@ Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) 
 - **Campo nulo não apaga o que já existe.** No `/api/identify`, só os campos preenchidos entram no upsert. Numa segunda visita sem UTM na URL, a origem da primeira visita é preservada — que é o comportamento certo pra atribuição.
 - **`/api/event` cria o visitante se ele não existir.** `events_log.trck_user_id` tem FK pra `visitors`; um evento pode chegar antes do identify (corrida de rede, aba restaurada). Criar a linha mínima é melhor do que descartar o evento.
 - **Dedup por `event_id` único**, com `ignoreDuplicates` (vira `on conflict do nothing`). Reenvio do mesmo evento devolve 200 com `duplicated: true`, sem criar linha nova.
-- **CORS com allowlist fechada e comparação exata.** Nada de `*` e nada de `endsWith(".negou.net")` — `negou.net.site-do-atacante.com` passaria no endsWith. Tem teste com esse domínio exato.
+- **CORS com allowlist fechada e comparação exata.** Nada de `*` e nada de `endsWith(".exemplo.com")` — `exemplo.com.site-do-atacante.com` passaria no endsWith. Tem teste com esse domínio exato.
 - **Sem cookie entre domínios.** O `track.js` lê o que precisa (trck_user_id, `_fbp`/`_fbc`, `_ga`, `_ga_<id>`) no próprio site e manda tudo explicitamente no corpo. Isso dispensa `Access-Control-Allow-Credentials` e toda a fragilidade de cookie cross-site — menos superfície e menos coisa pra quebrar quando navegador mudar política.
 - **Cross-domain é por URL.** O `track.js` decora automaticamente links de checkout (PerfectPay) com `?tuid=` e links de WhatsApp com o id dentro do texto da mensagem, inclusive em links criados depois (MutationObserver). É isso que permite casar a compra com a visita na fase 7.
 - **`event_source_url` sem query string** (2026-09-24): só UTMs e click ids
@@ -318,15 +318,15 @@ No instante do PageView o sistema só conhece cookie, IP e geo. Email, nome e te
 - **O país do telefone vem da moeda da transação, não de um campo do painel (2026-09-23).** Antes era `settings.default_phone_country`, um DDI fixo por deploy digitado na aba Delay. Isso quebrava o cliente que vende em mais de uma moeda: o comprador americano de uma venda Stripe em USD ganhava o prefixo 55 e nunca casava no Meta. Agora:
   - **Numa compra** (webhook, `enrichVisitorFromPurchase`, `dispatchPurchase`), o país é `obterPaisDaMoeda(purchase.currency)` (`lib/webhooks/adapters/index.ts`): BRL → BR, USD → US, EUR → PT. A moeda é o sinal confiável que o webhook traz. A geolocalização do visitante **nunca** entra nisso — ela erra com viagem e VPN, e continua sendo usada só para `ct`/`st`/`zp`/`country`.
   - **EUR → PT é aproximação**: o euro circula em ~20 países. Quando alguma plataforma passar a mandar o país do comprador, ele deve ter precedência sobre a moeda.
-  - **Sem compra** (`/api/identify` — formulários e `negou.identify()`), não há moeda: vale `TRACKING_DEFAULT_PHONE_COUNTRY` (`lib/phone-country.ts`), uma env var por deploy, ISO-2, padrão `BR`. Moeda ausente ou não mapeada também cai nela, com `console.warn`.
+  - **Sem compra** (`/api/identify` — formulários e `thetrack.identify()`), não há moeda: vale `TRACKING_DEFAULT_PHONE_COUNTRY` (`lib/phone-country.ts`), uma env var por deploy, ISO-2, padrão `BR`. Moeda ausente ou não mapeada também cai nela, com `console.warn`.
   - **Por que o fallback não é simplesmente "BR" chumbado:** o tracker já atende clientes de países diferentes, e o `phone_hash` do `/api/identify` é o que TODO evento de navegador manda pro Meta. Um "BR" fixo zeraria a correspondência de telefone de todo deploy fora do Brasil, sem erro nenhum — exatamente o defeito que o campo antigo existia para evitar. A configurabilidade saiu do banco e da tela, não deixou de existir.
   - **`normalizePhone(telefone, país)` recebe ISO-2, não mais o código de discagem.** O parâmetro antigo era `"55"`; passar `"BR"` para a versão antiga tiraria os não-dígitos, ficaria vazio e devolveria o número **sem prefixo nenhum**. Por isso `DIAL_PLANS` em `lib/crypto/hash.ts` guarda, por país, o código E.164 **e os tamanhos do número nacional**. O tamanho importa: a regra antiga ("10 ou 11 dígitos = nacional") é brasileira, e aplicada a um americano que digitou `1 555 123 4567` (11 dígitos) prefixaria duas vezes. País fora da tabela cai no plano do país padrão, com aviso no log — nunca sem prefixo. Adicionar um país é uma linha.
   - **Telefone digitado com `+` vale como veio**, inclusive de um país diferente do da moeda (americano pagando em BRL). Fora isso, **para o Brasil o resultado é idêntico ao anterior** — conferido em 200 mil entradas aleatórias contra a versão antiga.
   - **Hashes de telefone gravados antes desta mudança não são recalculados.** Os de `visitors` não têm como (só o hash é guardado); os de `purchases` teriam, a partir de `buyer_phone`, mas não vale a migration: para BR o hash é o mesmo, e o volume fora do Brasil era de desenvolvimento.
 - **BUG CORRIGIDO: o `ga_client_id` nunca era capturado na primeira visita.** O cookie `_ga` só nasce depois que o `gtag.js` baixa e executa — sempre DEPOIS do primeiro `/api/identify`. O `_fbp` tinha tratamento pra isso (`ensureFbp()`), o `_ga` não tinha. Resultado: todo visitante de primeira viagem ficava com `ga_client_id` e `ga_session_id` nulos, e a compra do webhook, que reusa esse id pra cair na sessão certa, virava tráfego direto órfão no GA4 — justamente no caso mais comum, visita/checkout/compra na mesma sessão. Agora `backfillGaClientId()` usa `gtag('get', id, 'client_id', cb)`, a API oficial, que enfileira o callback até o script estar pronto (sem polling nem palpite de timing), e manda um identify complementar só quando o id aparece. Como o `/api/identify` não apaga campo nulo, repetir é seguro. Detectado no primeiro visitante real da LP, em 2026-09-18.
-- **Captura de formulário:** o caminho principal é o site chamar `negou.identify({...})`. O farejador de `submit`/clique é a rede de segurança. A **lista de proibições vem primeiro e é definitiva**: `type=password`, `hidden`, `file`, `autocomplete^="cc-"`, qualquer nome batendo senha/cartão/CVV/CPF/código, valor que passa no Luhn com 13-19 dígitos, e `data-negou-ignore`. Formulário que contém campo de senha é ignorado **por inteiro** (é tela de login: nada a ganhar, tudo a perder), e o mesmo vale pra formulário cujo `action` aponta pro checkout. Email é conferido antes de telefone, pra um campo chamado "email" com dígitos nunca ser lido como telefone.
+- **Captura de formulário:** o caminho principal é o site chamar `thetrack.identify({...})`. O farejador de `submit`/clique é a rede de segurança. A **lista de proibições vem primeiro e é definitiva**: `type=password`, `hidden`, `file`, `autocomplete^="cc-"`, qualquer nome batendo senha/cartão/CVV/CPF/código, valor que passa no Luhn com 13-19 dígitos, e `data-thetrack-ignore` (`data-negou-ignore` continua aceito, para quem já instalou). Formulário que contém campo de senha é ignorado **por inteiro** (é tela de login: nada a ganhar, tudo a perder), e o mesmo vale pra formulário cujo `action` aponta pro checkout. Email é conferido antes de telefone, pra um campo chamado "email" com dígitos nunca ser lido como telefone.
 - **O `_fbp` é gerado por nós quando não existe**, antes de carregar o `fbevents.js`. Com o `fbq('track')` suprimido não dá pra contar que o script do Meta grave o cookie, e quem bloqueia o `fbevents` por extensão nunca teria `_fbp` nenhum. Gravar **antes** é o que evita o pior caso: o fbevents acha o cookie pronto e reaproveita, em vez de criar um segundo valor — dois `_fbp` pro mesmo navegador derrubariam a correspondência.
-- **O `init()` do `track.js` virou assíncrono** (espera o `/api/identify` com teto de 800 ms). Isso habilita o modo adaptativo e, de quebra, corrige um defeito que já existia: o PageView chegava ao servidor antes de `fbp`/`fbc`/geo serem gravados. Como `init` agora espera, um `negou.track()` chamado cedo é enfileirado localmente, e o `pagehide` esvazia essa fila na hora pra quem sai antes do teto.
+- **O `init()` do `track.js` virou assíncrono** (espera o `/api/identify` com teto de 800 ms). Isso habilita o modo adaptativo e, de quebra, corrige um defeito que já existia: o PageView chegava ao servidor antes de `fbp`/`fbc`/geo serem gravados. Como `init` agora espera, um `thetrack.track()` chamado cedo é enfileirado localmente, e o `pagehide` esvazia essa fila na hora pra quem sai antes do teto.
 
 ### ⚠️ Ordem obrigatória: migration ANTES do deploy
 
@@ -968,7 +968,7 @@ variáveis em `.env.example`.
   neutro, nunca a marca de outro cliente.
 - **BUG CORRIGIDO: o cookie de identidade nunca era gravado em domínio
   `.com.br`.** `rootDomain()` pegava os dois últimos rótulos do hostname, o que
-  só funciona num domínio de dois níveis como `negou.net`. Em
+  só funciona num domínio de dois níveis como `cliente.com`. Em
   `www.cliente.com.br` isso produzia `.com.br`, um sufixo público — e o
   navegador **ignora** a atribuição em vez de lançar erro, então o `catch` nunca
   rodava. A identidade caía só no localStorage e não atravessava subdomínio, em
@@ -1170,7 +1170,7 @@ histórico de incidentes) e `implementation_plan.md`.
 - `service_role` do Supabase só em arquivos com import `server-only`, nunca no client
 - Credenciais de destino (GA4/Meta) **cifradas** (Supabase Vault), nunca em texto puro em coluna de tabela
 - Cadastro público de usuário do painel **desligado** — contas criadas manualmente no Supabase Studio
-- Arquivos soltos de credencial (Meta, GA4, Supabase) ficam só em `apps/tracking.negou.net/.credenciais-locais/`, uma pasta com regra própria e isolada no `.gitignore` (`/.credenciais-locais/`) — **nunca remover essa linha**, e nunca criar um `.txt`/`.json` de segredo fora dessa pasta. Eles serão apagados pelo usuário depois de migrados para o painel (fase 4) e para `.env.local` (infra do Supabase, já feito)
+- Arquivos soltos de credencial (Meta, GA4, Supabase) ficam só em `apps/tracking.seudominio.com/.credenciais-locais/`, uma pasta com regra própria e isolada no `.gitignore` (`/.credenciais-locais/`) — **nunca remover essa linha**, e nunca criar um `.txt`/`.json` de segredo fora dessa pasta. Eles serão apagados pelo usuário depois de migrados para o painel (fase 4) e para `.env.local` (infra do Supabase, já feito)
 
 ### Código
 
@@ -1299,6 +1299,46 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-09-24:** Rebranding — Negou → TheTrack. O tracker deixou de ser SaaS
+  interno da Negou e virou produto multi-cliente; a Negou passa a ser só mais
+  um cliente, como a Viventra. Grep `-ri negou` no repo inteiro (fora
+  `node_modules`/`.next`/`.git`) achou 8 arquivos — nenhum em `README.md`,
+  `AGENTS.md`, `TUTORIAL_CADASTRO_CLIENTE.md` nem em `supabase/migrations/`.
+  - **Identificador técnico → `thetrack`** (`public/track.js`): cookie e
+    localStorage `negou_tuid` → `thetrack_tuid`, com migração automática em
+    `resolveId()` — quem já tem o nome antigo é lido, regravado sob o nome
+    novo e o antigo é apagado (`clearLegacyIdentity()`), sem gerar
+    `trck_user_id` novo e sem perder atribuição nem a fila da fase 7.5.
+    `window.negou` → `window.thetrack`, com `window.negou = window.thetrack`
+    como alias permanente. `data-negou-ignore`/`data-negou-form`/
+    `data-negou-forms` continuam aceitos ao lado de `data-thetrack-*`.
+    `lib/integrations/bask-bridge.ts`: `window.__negouBask` →
+    `window.__thetrackBask` (sem alias — a ponte nunca foi publicada em GTM
+    de cliente ainda, é gerada de novo a cada vez que o diálogo abre).
+  - **Marca/texto → "TheTrack"**: título deste arquivo, comentários e exemplos
+    em `lib/branding.ts`, `.env.example`, `ONBOARDING.md` e
+    `app/api/identify/route.ts`.
+  - **Domínio de exemplo → genérico**: o `endsWith(".negou.net")` de
+    ilustração virou `exemplo.com` (alinhado com o que `lib/cors.ts` já usa),
+    e o exemplo de domínio de dois níveis em `cookieDomain()` virou
+    `cliente.com`.
+  - **Deixado como está, por decisão do usuário:** fatos reais e já
+    verificados sobre o deploy real da Negou fora do Histórico (os "6
+    domínios da Negou" da allowlist antiga, "inclusive o da própria Negou",
+    o `NEGOU_TESTE` citado como nome real de um `test_event_code` de
+    incidente, e as Pendências manuais com `lp.negou.net`/`fdantas87/negou`);
+    o caminho `apps/tracking.negou.net` na Stack e na árvore de arquitetura
+    virou só o texto do domínio (`apps/tracking.seudominio.com`), sem mexer
+    na inconsistência de caminho já registrada abaixo (2026-09-24, "Catraca de
+    build"); `implementation_plan.md` (fora da lista pedida, plano histórico
+    do monorepo antigo); e o `## Histórico` inteiro, intocado.
+  - Verificado: `npm run build` com saída 0, `npm run lint` limpo nos 7
+    arquivos tocados, `node --check public/track.js` OK, e teste de mesa da
+    migração do cookie (ver conversa) cobrindo visitante novo, visitante só
+    com o nome novo, visitante só com o nome antigo (cookie e localStorage,
+    inclusive um sem o outro) e URL com `tuid`/`trck_user_id` sobrescrevendo
+    os dois. Nenhum commit nem push feito — fica para o usuário decidir a
+    ordem de publicação (ver pontas soltas na conversa).
 - **2026-09-24:** Integração Bask — peça do navegador. Com o MCP da Bask
   conectado, a pesquisa trocou três premissas do plano: (1) webhook é add-on
   pago e a loja não tem — o usuário decidiu adiar, então não há adaptador ainda;

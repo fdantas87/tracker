@@ -16,10 +16,11 @@
  * - decora links de checkout e WhatsApp com o trck_user_id
  *
  * O que ele expõe:
- *   negou.track("InitiateCheckout", { value: 97, currency: "BRL" })
- *   negou.identify({ email: "...", phone: "...", first_name: "..." })
- *   negou.decorate("https://checkout...")   -> url com trck_user_id
- *   negou.id()                              -> trck_user_id atual
+ *   thetrack.track("InitiateCheckout", { value: 97, currency: "BRL" })
+ *   thetrack.identify({ email: "...", phone: "...", first_name: "..." })
+ *   thetrack.decorate("https://checkout...")   -> url com trck_user_id
+ *   thetrack.id()                              -> trck_user_id atual
+ *   (window.negou continua funcionando como alias, para quem já instalou)
  *
  * DECISÃO IMPORTANTE (dedup): o event_id nasce AQUI, no navegador, e é usado
  * ao mesmo tempo no fbq e na chamada ao nosso servidor. É isso que deixa o
@@ -50,8 +51,12 @@
   // Configuração
   // ---------------------------------------------------------------------
 
-  var COOKIE_NAME = "negou_tuid"
-  var STORAGE_KEY = "negou_tuid"
+  var COOKIE_NAME = "thetrack_tuid"
+  var STORAGE_KEY = "thetrack_tuid"
+  // Nome antigo (era o mesmo em cookie e localStorage), lido uma vez em
+  // resolveId() pra migrar a identidade de quem visitou antes do rebranding
+  // sem gerar um trck_user_id novo pra ele.
+  var LEGACY_KEY = "negou_tuid"
   var URL_PARAM = "tuid"
   var COOKIE_DAYS = 365
 
@@ -68,7 +73,7 @@
   /** Teto de chamadas de identify por página, contra formulário em loop. */
   var MAX_IDENTIFY_PER_PAGE = 5
 
-  /** Usado tanto pelo negou.identify() quanto pelo farejador de formulário. */
+  /** Usado tanto pelo thetrack.identify() quanto pelo farejador de formulário. */
   var EMAIL_RE = /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i
 
   // A base da API sai do src deste próprio script, então o mesmo arquivo
@@ -141,7 +146,7 @@
    * visitante ser reconhecido em lp., blog., loja. etc. sem cookie de terceiro.
    *
    * POR QUE NÃO É `hostname.slice(-2)`: pegar os dois últimos rótulos só
-   * funciona em domínio de dois níveis (`negou.net`). Num `cliente.com.br` isso
+   * funciona em domínio de dois níveis (`cliente.com`). Num `cliente.com.br` isso
    * produz `.com.br`, que é um sufixo público — e o navegador simplesmente
    * IGNORA a atribuição, sem lançar erro. O resultado era um cookie que nunca
    * era gravado, em silêncio, em praticamente todo cliente brasileiro: a
@@ -227,9 +232,33 @@
   // ---------------------------------------------------------------------
 
   /**
+   * Apaga o cookie/localStorage do nome antigo (`negou_tuid`), nos dois
+   * domínios possíveis (host e o domínio amplo de cookieDomain()) — sem
+   * isso o valor velho ficaria para sempre ao lado do novo.
+   */
+  function clearLegacyIdentity() {
+    document.cookie = LEGACY_KEY + "=; Max-Age=0; path=/"
+    var dominio = cookieDomain()
+    if (dominio) {
+      document.cookie = LEGACY_KEY + "=; Max-Age=0; path=/; domain=" + dominio
+    }
+    try {
+      window.localStorage.removeItem(LEGACY_KEY)
+    } catch {
+      /* modo privado ou storage bloqueado: nada a limpar */
+    }
+  }
+
+  /**
    * Ordem importa: a URL vem primeiro porque é assim que a identidade
    * atravessa domínios (link de checkout, link de WhatsApp). Se o visitante
    * chegou com um id na URL, ele manda no que estava guardado aqui.
+   *
+   * MIGRAÇÃO DE MARCA: quem visitou antes do rebranding (Negou -> TheTrack)
+   * tem a identidade sob o nome antigo `negou_tuid`. Gerar um id novo pra
+   * essas pessoas zeraria a atribuição e a retroalimentação da fase 7.5 —
+   * por isso o nome antigo é lido como último recurso, ANTES de criar um id,
+   * e migrado pro nome novo.
    */
   function resolveId() {
     var fromUrl = param(URL_PARAM) || param("trck_user_id")
@@ -240,11 +269,17 @@
     }
 
     var existing = getCookie(COOKIE_NAME) || storageGet(STORAGE_KEY)
+    var fromLegacy = false
+    if (!existing) {
+      existing = getCookie(LEGACY_KEY) || storageGet(LEGACY_KEY)
+      fromLegacy = Boolean(existing)
+    }
     if (existing) {
       // Reescreve pra renovar a validade e cobrir o caso de o cookie ter
       // sumido mas o localStorage ter sobrevivido (ou vice-versa).
       setCookie(COOKIE_NAME, existing, COOKIE_DAYS)
       storageSet(STORAGE_KEY, existing)
+      if (fromLegacy) clearLegacyIdentity()
       return existing
     }
 
@@ -555,7 +590,7 @@
   }
 
   /**
-   * negou.identify({ email, phone, first_name, last_name })
+   * thetrack.identify({ email, phone, first_name, last_name })
    *
    * Caminho PRINCIPAL de enriquecimento: a estrutura do site chama isto com os
    * dados do próprio formulário. O farejador de formulário (abaixo) é só a
@@ -783,7 +818,7 @@
   // ---------------------------------------------------------------------
 
   /**
-   * O caminho certo é o site chamar negou.identify() com os dados que ele já
+   * O caminho certo é o site chamar thetrack.identify() com os dados que ele já
    * tem. Isto aqui é pra quando ninguém chamou: lê email/telefone/nome do
    * formulário que a pessoa acabou de enviar.
    *
@@ -840,7 +875,7 @@
     if (ac.indexOf("cc-") === 0) return true
     if (ac.indexOf("password") !== -1) return true
     if (DENY_ATTR.test(attrBlob(el))) return true
-    if (el.closest && el.closest("[data-negou-ignore]")) return true
+    if (el.closest && el.closest("[data-thetrack-ignore],[data-negou-ignore]")) return true
     if (looksLikeCard(el.value)) return true
     return false
   }
@@ -851,7 +886,13 @@
    */
   function isSensitiveForm(scope) {
     if (!scope || !scope.querySelector) return false
-    if (scope.getAttribute && scope.getAttribute("data-negou-ignore") !== null) return true
+    if (
+      scope.getAttribute &&
+      (scope.getAttribute("data-thetrack-ignore") !== null ||
+        scope.getAttribute("data-negou-ignore") !== null)
+    ) {
+      return true
+    }
     if (scope.querySelector("input[type=password]")) return true
 
     try {
@@ -943,9 +984,11 @@
         if (!el || !el.closest) return
 
         var button = el.closest("button, [type=submit], [role=button]")
-        if (!button || button.closest("[data-negou-ignore]")) return
+        if (!button || button.closest("[data-thetrack-ignore],[data-negou-ignore]")) return
 
-        var scope = button.closest("form") || button.closest("[data-negou-form]")
+        var scope =
+          button.closest("form") ||
+          button.closest("[data-thetrack-form],[data-negou-form]")
         if (!scope) return
 
         var traits = harvest(scope)
@@ -955,7 +998,7 @@
     )
   }
 
-  window.negou = {
+  window.thetrack = {
     track: track,
     identify: identify,
     decorate: decorate,
@@ -965,6 +1008,8 @@
     },
     state: state,
   }
+  // Alias pra quem já instalou o script antes do rebranding (Negou -> TheTrack).
+  window.negou = window.thetrack
 
   // ---------------------------------------------------------------------
   // Inicialização
@@ -979,9 +1024,11 @@
     state.neverDelay = dispatch.never_delay || []
 
     // O site pode desligar o farejador sem mexer no painel:
-    // <script src=".../track.js" data-negou-forms="off" defer></script>
+    // <script src=".../track.js" data-thetrack-forms="off" defer></script>
     var formsOff =
-      scriptEl && scriptEl.getAttribute("data-negou-forms") === "off"
+      scriptEl &&
+      (scriptEl.getAttribute("data-thetrack-forms") === "off" ||
+        scriptEl.getAttribute("data-negou-forms") === "off")
     state.forms = Boolean(config.forms && config.forms.capture) && !formsOff
 
     // ANTES do loadPixel: se o cookie já existe quando o fbevents carrega, ele
