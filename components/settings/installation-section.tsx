@@ -47,6 +47,14 @@ export function InstallationSection() {
               — um PageView deve aparecer em poucos segundos.
             </p>
           </div>
+          <p
+            className="mt-3 text-balance text-center text-sm text-muted-foreground"
+            style={{ fontFamily: "'Manrope', sans-serif" }}
+          >
+            Para medir um clique como conversão, adicione ao botão a classe{" "}
+            <code className="font-mono text-foreground">thetrack-</code> + nome do evento — ex.:{" "}
+            <code className="font-mono text-foreground">thetrack-CustomizeProduct</code>.
+          </p>
         </div>
       </div>
     </div>

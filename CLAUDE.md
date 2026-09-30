@@ -224,6 +224,22 @@ Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) 
   terceiros carrega o que não deve sair da página — nome de medicamento na tela
   de obrigado da Bask, email em formulário mal feito. Ver "Integração Bask".
 - **`keepalive: true` no envio.** O InitiateCheckout dispara um instante antes de o navegador sair da página; sem keepalive a requisição é cancelada no meio e o evento se perde justo no passo mais valioso do funil.
+- **Clique como conversão é por classe, sem regra no painel** (2026-09-30).
+  `class="btn thetrack-CustomizeProduct"` → o clique dispara `CustomizeProduct`
+  (`watchClicks()` no `track.js`). O nome mora no botão: mapear classes de estilo
+  no painel quebraria em silêncio no primeiro redesign, e classe funciona em
+  qualquer construtor de página. O contexto do clique (`label`, `section` = `id`
+  mais próximo, `href` sem query) vai pro `custom_data` e **não** vai pro Meta:
+  o `firePixel()` passou a filtrar pelas mesmas chaves que a CAPI repassa
+  (`META_KEYS`, espelho de `lib/meta/custom-data.ts`) — antes o pixel recebia o
+  objeto inteiro. Ignora o segundo clique de duplo clique (`event.detail > 1`) e
+  botão de formulário inválido.
+- **Evento disparado na saída da página não se perde mais** (2026-09-30). Dois
+  furos, os dois no caminho de um CTA que leva pra outra página: (1) evento na
+  fila local antes da config voltava pra fila no `pagehide` (`track()` via
+  `!state.ready`) e morria ali — agora `leaving` fura a fila; (2) evento
+  esperando o identify ficava preso numa promise que a página não viveria pra
+  resolver — agora o `pagehide` também encerra a espera do `waitForIdentify()`.
 - **Rate limit no próprio Postgres, não em Redis.** O contador precisa ser compartilhado entre instâncias: cada requisição pode cair numa função serverless diferente, e contador em memória nunca soma — o atacante só precisa bater em instâncias distintas. A escolha clássica seria Redis, mas seria mais um serviço, mais uma conta e mais duas credenciais; o Postgres do Supabase já existe, já é compartilhado e já é consultado nesses mesmos endpoints. Uma chamada atômica (`bump_rate_limit`, na migration `..._rate_limits.sql`) resolve numa ida só ao banco. Em qualquer falha do banco a decisão é **deixar passar**: limitador com problema não pode derrubar a captura do site inteiro — verificado com a função ainda inexistente, os endpoints seguiram respondendo 200.
 
 ---
@@ -1299,6 +1315,11 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-09-30:** Clique como conversão por classe `thetrack-<Evento>`, filtro
+  das chaves do pixel e os dois consertos de envio na saída da página (ver
+  "Captura de eventos"). Primeiro uso: CTAs da Viventra que abrem o quiz do
+  intake → `CustomizeProduct`, waitlist → `CompleteRegistration`. Verificado:
+  `node --check`, lint e build.
 - **2026-09-24:** Rebranding — Negou → TheTrack. O tracker deixou de ser SaaS
   interno da Negou e virou produto multi-cliente; a Negou passa a ser só mais
   um cliente, como a Viventra. Grep `-ri negou` no repo inteiro (fora

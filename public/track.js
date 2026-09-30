@@ -14,6 +14,8 @@
  * - manda o visitante pro /api/identify
  * - dispara PageView
  * - decora links de checkout e WhatsApp com o trck_user_id
+ * - clique em elemento com a classe `thetrack-NomeDoEvento` dispara esse
+ *   evento (ex.: class="btn thetrack-CustomizeProduct"), sem nada no painel
  *
  * O que ele expõe:
  *   thetrack.track("InitiateCheckout", { value: 97, currency: "BRL" })
@@ -129,6 +131,11 @@
     "ttclid",
     "msclkid",
   ]
+
+  // As únicas chaves do custom_data que o Pixel recebe — as mesmas que o
+  // servidor repassa à Conversions API (lib/meta/custom-data.ts). O resto, como
+  // o contexto do clique, fica no nosso banco e não vaza pro Meta.
+  var META_KEYS = ["value", "currency", "content_ids", "content_name", "content_type", "order_id"]
 
   // ---------------------------------------------------------------------
   // Utilidades de cookie / storage
@@ -641,6 +648,8 @@
       identifyPromise,
       new Promise(function (resolve) {
         setTimeout(resolve, IDENTIFY_WAIT_MS)
+        // Quem sai antes do teto não espera: o post sai ainda no pagehide.
+        window.addEventListener("pagehide", resolve, { once: true })
       }),
     ])
   }
@@ -663,8 +672,10 @@
 
   function firePixel(eventName, data, eventId) {
     if (!window.fbq) return false
+    var meta = {}
+    for (var key in data) if (META_KEYS.indexOf(key) !== -1) meta[key] = data[key]
     try {
-      window.fbq("track", eventName, data, { eventID: eventId })
+      window.fbq("track", eventName, meta, { eventID: eventId })
       return true
     } catch {
       return false
@@ -710,8 +721,8 @@
   function track(eventName, params) {
     // A inicialização virou assíncrona (espera a config e o identify), então
     // um track() chamado cedo demais precisa ser guardado — antes ele sumia
-    // em silêncio.
-    if (!state.ready) return bufferEvent(eventName, params)
+    // em silêncio. Quem está saindo não pode voltar pra fila: ela morre junto.
+    if (!state.ready && !leaving) return bufferEvent(eventName, params)
 
     var eventId = uuid()
     var data = params || {}
@@ -998,6 +1009,34 @@
     )
   }
 
+  /**
+   * Clique em elemento com a classe `thetrack-<Evento>` dispara esse evento:
+   *   <a class="btn thetrack-CustomizeProduct" href="...">
+   * O nome mora no próprio botão, então não há regra nenhuma no painel pra
+   * quebrar quando o site troca as classes de estilo. Captura e registro no
+   * carregamento, antes da config: CTA costuma levar pra outra página, e o
+   * clique precoce fica na fila que o pagehide esvazia.
+   */
+  function watchClicks() {
+    document.addEventListener(
+      "click",
+      function (event) {
+        var el = event.target && event.target.closest && event.target.closest('[class*="thetrack-"]')
+        var match = el && /(?:^|\s)thetrack-([A-Za-z]\w*)/.exec(el.getAttribute("class"))
+        // detail > 1 é o segundo clique de um duplo clique; botão de formulário
+        // inválido não converte (o navegador nem deixa enviar).
+        if (!match || event.detail > 1 || (el.form && !el.form.checkValidity())) return
+        var scope = el.closest("[id]")
+        track(match[1], {
+          label: (el.innerText || el.value || "").trim().slice(0, 100),
+          section: scope ? scope.id : null,
+          href: typeof el.href === "string" ? el.href.split(/[?#]/)[0] : null,
+        })
+      },
+      true
+    )
+  }
+
   window.thetrack = {
     track: track,
     identify: identify,
@@ -1080,6 +1119,8 @@
     },
     { once: true }
   )
+
+  watchClicks()
 
   fetch(API_BASE + "/api/config/public", { mode: "cors" })
     .then(function (response) {
