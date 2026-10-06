@@ -79,7 +79,7 @@ function useCopy(text: string) {
 
 function WebhookUrlHelp() {
   const origin = typeof window !== "undefined" ? window.location.origin : ""
-  const webhookUrl = `${origin}/api/webhook/compra/custom?token=SEU_TOKEN`
+  const webhookUrl = `${origin}/api/webhook/custom?token=SEU_TOKEN`
 
   const { copied, copy } = useCopy(webhookUrl)
 

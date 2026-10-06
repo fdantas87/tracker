@@ -104,7 +104,7 @@ export function BaskDialog({
               <code className="font-mono text-foreground">x-webhook-token</code>{" "}
               valendo o token de Integrações → Webhook.
             </p>
-            <UrlBox url={`${origin}/api/webhook/compra/bask`} />
+            <UrlBox url={`${origin}/api/webhook/bask`} />
             <ul className="mt-3 flex flex-col gap-1">
               {WEBHOOKS.map((linha) => (
                 <li key={linha.evento} className="text-xs text-muted-foreground">

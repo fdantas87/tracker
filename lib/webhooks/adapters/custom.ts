@@ -7,7 +7,7 @@ import type {
 } from "./types"
 
 /**
- * Adaptador de contrato fixo — `/api/webhook/compra/custom`.
+ * Adaptador de contrato fixo — `/api/webhook/custom` (e o caminho antigo `/api/webhook/compra/custom`).
  *
  * Para qualquer plataforma sem adaptador próprio: quem integra (n8n, Make,
  * Zapier, o sistema do próprio cliente) monta este JSON e pronto. O formato é

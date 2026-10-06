@@ -2,7 +2,7 @@ import { LIMITS, cleanAmount, cleanString } from "@/lib/validation"
 import type { AdapterResult, PurchaseStatus, WebhookAdapter } from "./types"
 
 /**
- * Adaptador da Bask — `/api/webhook/compra/bask`.
+ * Adaptador da Bask — `/api/webhook/bask` (e o caminho antigo `/api/webhook/compra/bask`).
  *
  * A Bask manda um webhook por tipo de evento, sempre como `{ type, data }`
  * (confirmado no template oficial `bask-labs/bask-webhooks-vercel`). A doc com
