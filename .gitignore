@@ -46,3 +46,6 @@ next-env.d.ts
 # Credenciais soltas (arquivos de referência, NUNCA versionar) — todas
 # ficam dentro desta pasta dedicada:
 /.credenciais-locais/
+
+# ferramentas locais
+/.claude/
