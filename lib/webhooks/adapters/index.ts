@@ -1,5 +1,7 @@
 import { DEFAULT_PHONE_COUNTRY } from "@/lib/phone-country"
 
+import { baskAdapter } from "./bask"
+import { customAdapter } from "./custom"
 import { perfectPayAdapter } from "./perfectpay"
 import { stripeAdapter } from "./stripe"
 import type { WebhookAdapter } from "./types"
@@ -11,15 +13,21 @@ import type { WebhookAdapter } from "./types"
  * é esta tabela que decide quem sabe ler aquele payload. Para adicionar
  * Hotmart, Kiwify ou Eduzz: escrever o adaptador, registrar aqui, e incluir o
  * nome no CHECK de `purchases.platform` (a migration da fase 2 já deixou os
- * quatro previstos; 'stripe' entrou depois, em 20260921130000).
+ * quatro previstos; 'stripe' entrou em 20260921130000, 'custom' e 'bask' em
+ * 20261005205000).
  *
  * O Stripe é o primeiro cuja autenticação NÃO é o token compartilhado: ele
  * assina cada requisição com HMAC. A rota trata isso antes de chamar o
  * adaptador — ver `verifyStripeSignature` em ./stripe.
+ *
+ * `custom` é o contrato fixo para plataforma sem adaptador próprio (ver
+ * ./custom); `bask` lê o payload nativo da Bask (ver ./bask).
  */
 const ADAPTERS: Record<string, WebhookAdapter> = {
   perfectpay: perfectPayAdapter,
   stripe: stripeAdapter,
+  custom: customAdapter,
+  bask: baskAdapter,
 }
 
 export function getAdapter(platform: string): WebhookAdapter | null {

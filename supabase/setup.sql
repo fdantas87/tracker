@@ -11,7 +11,7 @@
 -- Supabase e rode uma vez. O editor executa tudo numa transação única, então
 -- ou o schema inteiro aplica, ou nada aplica — não existe meio-termo.
 --
--- 16 arquivos, na ordem de aplicação:
+-- 17 arquivos, na ordem de aplicação:
 --   supabase/setup-preflight.sql                                         1eb5dba9
 --   supabase/migrations/20260916140000_extensions.sql                    b4e4fd34
 --   supabase/migrations/20260916140100_tables.sql                        245ec9a0
@@ -28,6 +28,7 @@
 --   supabase/migrations/20260923120000_cron_health.sql                   44fb0bcd
 --   supabase/migrations/20260923130000_remove_default_phone_country.sql  d87fea19
 --   supabase/migrations/20261005120000_clarity_integration.sql           00309238
+--   supabase/migrations/20261005205000_platform_custom_bask.sql          3a0a7b37
 -- ============================================================================
 
 -- >>> supabase/setup-preflight.sql
@@ -1777,3 +1778,33 @@ select cron.schedule(
   '30 4 * * *',
   $cron$ delete from public.clarity_snapshots where captured_at < now() - interval '400 days'; $cron$
 );
+
+-- >>> supabase/migrations/20261005205000_platform_custom_bask.sql
+-- ============================================================================
+-- Webhook de compra · plataformas 'custom' e 'bask'
+-- ============================================================================
+-- `purchases.platform` passa a aceitar dois valores novos:
+--
+--   custom -> o contrato fixo de /api/webhook/compra/custom, para qualquer
+--             plataforma sem adaptador próprio (n8n, Make, Zapier, sistema
+--             interno do cliente)
+--   bask   -> o adaptador nativo de /api/webhook/compra/bask, que lê o payload
+--             `{ type, data }` que a Bask manda direto
+--
+-- Mesmo padrão da migration do Stripe (20260921130000): a constraint já existe,
+-- então `drop constraint if exists` + `add constraint`, idempotente e seguro de
+-- rodar de novo dentro do setup.sql.
+--
+-- ⚠️ ORDEM OBRIGATÓRIA: rode esta migration ANTES do deploy.
+-- Os dois adaptadores gravam `platform` no mesmo upsert de sempre
+-- (app/api/webhook/compra/[platform]/route.ts). Sem o CHECK novo, o Postgres
+-- recusa A LINHA INTEIRA e a venda não é registrada — mesma lição das
+-- migrations 7.5, geo_enriquecido, 20260919090000, 20260919120000 e do Stripe.
+-- ============================================================================
+
+alter table public.purchases
+  drop constraint if exists purchases_platform_check;
+
+alter table public.purchases
+  add constraint purchases_platform_check
+  check (platform in ('perfectpay', 'hotmart', 'kiwify', 'eduzz', 'stripe', 'custom', 'bask'));

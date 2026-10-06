@@ -1,0 +1,230 @@
+import { LIMITS, cleanAmount, cleanString } from "@/lib/validation"
+import type { AdapterResult, PurchaseStatus, WebhookAdapter } from "./types"
+
+/**
+ * Adaptador da Bask — `/api/webhook/compra/bask`.
+ *
+ * A Bask manda um webhook por tipo de evento, sempre como `{ type, data }`
+ * (confirmado no template oficial `bask-labs/bask-webhooks-vercel`). A doc com
+ * o formato de cada `data` é fechada (docs.bask.health exige login), então a
+ * leitura dos campos é TOLERANTE: aceita os nomes da entidade de pagamento da
+ * Bask (`id`, `amountPaid`, `totalPrice`, `refundAmount`, `patientId`) direto
+ * em `data` ou aninhados em `data.payment`, e o paciente em `data.patient`.
+ * Quando nada bate, o erro lista só os NOMES das chaves recebidas — nunca os
+ * valores, que podem ser dado de saúde — para o ajuste ser feito a partir do
+ * primeiro payload real.
+ *
+ * Tradução (decidida com o usuário; Purchase = pagamento CONFIRMADO):
+ *   paymentSucceeded -> venda aprovada + Purchase (inclusive renovação e refil:
+ *                       cada cobrança é um pagamento novo, com id próprio)
+ *   paymentRefunded  -> reembolsada (reembolso parcial é ignorado, como no Stripe)
+ *   paymentCanceled  -> cancelada
+ *   disputeCreated   -> chargeback
+ *   disputeUpdated   -> ganha volta a aprovada, perdida fica chargeback
+ *   qualquer outro   -> ignorado com 200 (newOrder NUNCA vira Purchase)
+ *
+ * A chave da venda é o id do PAGAMENTO, não do pedido: no modelo da Bask
+ * pagamento e pedido são entidades separadas, e só o pagamento aparece no
+ * reembolso e na disputa.
+ *
+ * Nome e id do produto (o medicamento) nunca vão para Meta/GA4.
+ */
+
+type Efeito =
+  | { kind: "purchase" }
+  | { kind: "statusUpdate"; status: PurchaseStatus }
+  | { kind: "refund" }
+  | { kind: "disputeUpdate" }
+
+/** Chave normalizada: minúscula, sem `_`, `.` ou `-` (paymentSucceeded, payment.succeeded...). */
+const EVENTOS: Record<string, Efeito> = {
+  paymentsucceeded: { kind: "purchase" },
+  paymentrefunded: { kind: "refund" },
+  paymentcanceled: { kind: "statusUpdate", status: "canceled" },
+  paymentcancelled: { kind: "statusUpdate", status: "canceled" },
+  disputecreated: { kind: "statusUpdate", status: "chargeback" },
+  disputeupdated: { kind: "disputeUpdate" },
+}
+
+/** A Bask vende nos EUA; o modelo dela guarda valor decimal em dólar, sem campo de moeda. */
+const MOEDA_PADRAO = "USD"
+
+function asObject(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+/** Primeiro valor preenchido entre as fontes e nomes de campo prováveis. */
+function pick(
+  fontes: Record<string, unknown>[],
+  chaves: string[],
+  max: number = LIMITS.shortText
+): string | null {
+  for (const fonte of fontes) {
+    for (const chave of chaves) {
+      const valor = cleanString(fonte[chave], max)
+      if (valor) return valor
+    }
+  }
+  return null
+}
+
+/** Só os nomes das chaves (até um nível dentro de `data`), nunca os valores. */
+function descreverChaves(body: Record<string, unknown>): string {
+  const partes = Object.keys(body).map((chave) => {
+    const valor = asObject(body[chave])
+    const filhas = Object.keys(valor)
+    if (filhas.length === 0) return chave
+    const netas = filhas.map((filha) => {
+      const sub = Object.keys(asObject(valor[filha]))
+      return sub.length > 0 ? `${filha}{${sub.join(",")}}` : filha
+    })
+    return `${chave}{${netas.join(",")}}`
+  })
+  return partes.join(", ").slice(0, 600)
+}
+
+function erro(mensagem: string, body: Record<string, unknown>): AdapterResult {
+  const detalhe = `${mensagem}; chaves recebidas: ${descreverChaves(body)}`
+  console.warn(`[webhooks/bask] ${detalhe}`)
+  return { ok: false, error: detalhe }
+}
+
+function parse(body: Record<string, unknown>): AdapterResult {
+  const tipo = cleanString(body.type ?? body.event, LIMITS.eventName)
+  if (!tipo) return erro("payload sem `type`", body)
+
+  const efeito = EVENTOS[tipo.toLowerCase().replace(/[_.\-\s]/g, "")]
+  if (!efeito) return { ok: true, ignored: `evento_fora_do_escopo:${tipo}` }
+
+  const data = asObject(body.data)
+  const payment = asObject(data.payment)
+  const dispute = asObject(data.dispute)
+
+  // Em evento de pagamento, `data.id` é o próprio pagamento; em disputa é o id
+  // da disputa, então ali só valem os campos que nomeiam o pagamento.
+  const ehPagamento = tipo.toLowerCase().startsWith("payment")
+  const transactionId =
+    pick([data, dispute], ["paymentId", "payment_id"], LIMITS.id) ??
+    pick([payment], ["id"], LIMITS.id) ??
+    (ehPagamento ? pick([data], ["id"], LIMITS.id) : null)
+
+  if (!transactionId) return erro(`${tipo} sem id do pagamento`, body)
+
+  if (efeito.kind === "statusUpdate") {
+    return {
+      ok: true,
+      statusUpdate: { transactionId, status: efeito.status, platformStatus: tipo },
+    }
+  }
+
+  const fontesPagamento = [payment, data]
+  const pago = cleanAmount(
+    pick(fontesPagamento, ["amountPaid", "amount_paid", "totalPrice", "total_price", "amount", "total"])
+  )
+
+  if (efeito.kind === "refund") {
+    // Reembolso parcial: a venda continua valendo, só menor, e `purchases`
+    // não tem onde guardar quanto voltou. Marcar a linha inteira zeraria uma
+    // receita que em boa parte ficou de pé — mesma decisão do Stripe.
+    const devolvido = cleanAmount(
+      pick(fontesPagamento, ["refundAmount", "refund_amount", "amountRefunded"])
+    )
+    if (pago !== null && devolvido !== null && devolvido > 0 && devolvido < pago) {
+      return { ok: true, ignored: "reembolso_parcial" }
+    }
+    return {
+      ok: true,
+      statusUpdate: { transactionId, status: "refunded", platformStatus: tipo },
+    }
+  }
+
+  if (efeito.kind === "disputeUpdate") {
+    const situacao = pick([dispute, data], ["disputeStatus", "status"])?.toLowerCase()
+    if (situacao === "won") {
+      return {
+        ok: true,
+        statusUpdate: { transactionId, status: "approved", platformStatus: `${tipo}:won` },
+      }
+    }
+    if (situacao === "lost") {
+      return {
+        ok: true,
+        statusUpdate: { transactionId, status: "chargeback", platformStatus: `${tipo}:lost` },
+      }
+    }
+    return { ok: true, ignored: "disputa_em_andamento" }
+  }
+
+  // --- paymentSucceeded ------------------------------------------------------
+  const patient = asObject(data.patient)
+  const customer = asObject(data.customer)
+  const address = asObject(patient.address)
+  const fontesPaciente = [patient, customer, data]
+
+  const email = pick(fontesPaciente, ["email", "patientEmail", "customerEmail"])
+  const telefone = pick(fontesPaciente, ["phone", "phoneNumber", "mobilePhone", "patientPhone"])
+
+  // Pagamento de teste da Bask: reconhecido, mas nunca gravado nem enviado ao
+  // Meta. A resposta diz o que foi encontrado (sim/não, sem valores) — é a
+  // forma de conferir a leitura dos campos sem criar venda falsa.
+  if (data.testMode === true || payment.testMode === true || body.testMode === true) {
+    const sim = (v: unknown) => (v === null || v === undefined ? "nao" : "sim")
+    return {
+      ok: true,
+      ignored:
+        `modo_teste; reconhecido: id=sim valor=${sim(pago)} email=${sim(email)} ` +
+        `telefone=${sim(telefone)}; chaves recebidas: ${descreverChaves(body)}`,
+    }
+  }
+
+  // Sem valor não há Purchase honesto: um evento de valor 0 no Meta seria um
+  // erro silencioso. Melhor o 400 com as chaves, que diz onde o valor está.
+  if (pago === null) return erro("paymentSucceeded sem valor reconhecível", body)
+
+  const product = asObject(data.product)
+  const metodoBruto = pick(fontesPagamento, ["paymentMethod", "paymentMethodType", "payment_method", "cardBrand"])
+
+  return {
+    ok: true,
+    purchase: {
+      transactionId,
+      status: "approved",
+      platformStatus: tipo,
+
+      amount: pago,
+      currency: pick(fontesPagamento, ["currency"], 8)?.toUpperCase() ?? MOEDA_PADRAO,
+
+      paymentMethod: metodoBruto
+        ? /card|visa|master|amex|discover/i.test(metodoBruto) ? "credit_card" : "other"
+        : null,
+      platformPaymentMethod: metodoBruto,
+
+      productName: pick([product], ["name"]) ?? pick([data], ["productName"]),
+      productId: pick([product], ["id"], LIMITS.id) ?? pick([data], ["productId"], LIMITS.id),
+      omitProductFromAds: true,
+
+      buyerEmail: email,
+      buyerPhone: telefone,
+      buyerFirstName: pick(fontesPaciente, ["firstName", "first_name"]),
+      buyerLastName: pick(fontesPaciente, ["lastName", "last_name"]),
+      buyerPostalCode: pick([address, patient, customer, data], ["zipCode", "zip", "postalCode", "postal_code"]),
+
+      // O checkout da Bask não repassa o nosso id: o vínculo com a visita é
+      // pelo email/telefone, que a ponte do GTM já gravou no visitante.
+      trckUserId: null,
+
+      utmSource: null,
+      utmMedium: null,
+      utmCampaign: null,
+      utmTerm: null,
+      utmContent: null,
+    },
+  }
+}
+
+export const baskAdapter: WebhookAdapter = {
+  platform: "bask",
+  parse,
+}

@@ -20,12 +20,21 @@ const TRADUCAO = [
   { bask: "purchase", tracker: "SubmitApplication", quando: "tela de obrigado — checkout enviado" },
 ]
 
+/** Os webhooks a criar na Bask. Espelha o mapa de lib/webhooks/adapters/bask.ts. */
+const WEBHOOKS = [
+  { evento: "Payment Succeeded", efeito: "venda aprovada + Purchase (inclusive renovação e refil)" },
+  { evento: "Payment Refunded", efeito: "venda marcada como reembolsada" },
+  { evento: "Payment Canceled", efeito: "venda marcada como cancelada" },
+  { evento: "Dispute Created", efeito: "venda marcada como chargeback" },
+  { evento: "Dispute Updated", efeito: "disputa ganha volta a aprovada" },
+]
+
 /**
- * Instalação do tracker nas páginas da Bask (questionário e checkout).
+ * Instalação do tracker na Bask: o código das páginas (questionário e
+ * checkout) e os webhooks de pagamento, que são a fonte da venda.
  *
- * Só instruções e o código: a Bask não tem credencial para guardar aqui. O
- * Purchase da Bask depende do add-on Webhooks dela, que não está ligado — por
- * isso não há card de "conectado" nem URL de webhook nesta etapa.
+ * Só instruções: a Bask não tem credencial para guardar aqui — o webhook usa o
+ * token global de Integrações → Webhook.
  */
 export function BaskDialog({
   open,
@@ -85,6 +94,38 @@ export function BaskDialog({
               SubmitApplication.
             </p>
           </li>
+          <li>
+            <p className="font-medium">5. Cadastre os webhooks de pagamento</p>
+            <p className="mt-1 text-[13px] text-muted-foreground">
+              É o que registra a venda em Vendas e envia o Purchase. Na Bask, em
+              Settings → Webhooks &amp; API, crie <strong>um webhook para cada
+              evento</strong> abaixo (a Bask aceita um evento por webhook), todos
+              com a mesma URL e com o header{" "}
+              <code className="font-mono text-foreground">x-webhook-token</code>{" "}
+              valendo o token de Integrações → Webhook.
+            </p>
+            <UrlBox url={`${origin}/api/webhook/compra/bask`} />
+            <ul className="mt-3 flex flex-col gap-1">
+              {WEBHOOKS.map((linha) => (
+                <li key={linha.evento} className="text-xs text-muted-foreground">
+                  <span className="font-medium text-foreground">{linha.evento}</span> → {linha.efeito}
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Não assine New Order nem Order Updated: pedido criado não é
+              pagamento confirmado e nunca vira Purchase.
+            </p>
+          </li>
+          <li>
+            <p className="font-medium">6. Confira a ligação</p>
+            <p className="mt-1 text-[13px] text-muted-foreground">
+              O botão Test do webhook Payment Refunded deve responder 200 sem
+              criar nada: prova URL e token. 401 é token errado; um 400 traz os
+              nomes dos campos recebidos, para ajustar a leitura. A primeira
+              venda real aparece em Vendas.
+            </p>
+          </li>
         </ol>
 
         <div className="rounded-2xl border border-primary/10 p-4">
@@ -107,13 +148,40 @@ export function BaskDialog({
         <div className="flex items-start gap-2 rounded-xl bg-cyan/5 border border-cyan/30 p-3">
           <Info className="mt-0.5 size-4 shrink-0 text-cyan" />
           <p className="text-xs">
-            Venda da Bask só vira Purchase com pagamento confirmado, e isso chega
-            pelo add-on Webhooks da Bask, que ainda não está ligado. Até lá, nenhuma
-            venda da Bask aparece em Vendas nem vai como Purchase ao Meta e ao GA4.
+            Só Payment Succeeded vira Purchase. A venda é ligada à visita pelo
+            email ou telefone do paciente, que o código do passo 2 já registra no
+            questionário. O nome do medicamento fica só no painel, nunca vai ao
+            Meta nem ao GA4.
           </p>
         </div>
       </DialogContent>
     </Dialog>
+  )
+}
+
+function UrlBox({ url }: { url: string }) {
+  const [copied, setCopied] = React.useState(false)
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(url)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
+    } catch {
+      // Clipboard bloqueado: a URL segue visível para seleção manual.
+    }
+  }
+
+  return (
+    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+      <code className="flex-1 overflow-x-auto whitespace-nowrap rounded-xl border border-primary/20 bg-background/80 px-3 py-2.5 font-mono text-[12px]">
+        {url}
+      </code>
+      <Button type="button" variant="secondary" className="h-10 gap-2 rounded-xl" onClick={copy}>
+        {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+        {copied ? "Copiado" : "Copiar URL"}
+      </Button>
+    </div>
   )
 }
 

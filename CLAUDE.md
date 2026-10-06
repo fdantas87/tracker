@@ -95,6 +95,8 @@ apps/tracking.seudominio.com/
 │   ├── crypto/hash.ts                      # ✅ fase 5 — normalização + SHA-256 do Meta
 │   ├── webhooks/adapters/{index,types,perfectpay}.ts  # ✅ fase 7 — formato normalizado por plataforma
 │   ├── webhooks/adapters/stripe.ts         # ✅ Stripe — tradução + assinatura HMAC (server-only)
+│   ├── webhooks/adapters/custom.ts         # ✅ contrato fixo genérico (SEM server-only: a aba Webhook importa o exemplo)
+│   ├── webhooks/adapters/bask.ts           # ✅ Bask — payload nativo { type, data }, leitura tolerante
 │   ├── webhooks/status.ts                  # ✅ Bask (etapa A) — resolveStatus: a venda nunca volta para pending
 │   ├── integrations/bask-bridge.ts         # ✅ Bask — gera a ponte dataLayer -> track.js (SEM server-only)
 │   ├── dispatch/purchase-dispatch.ts       # ✅ fase 7 — Purchase pro Meta + GA4
@@ -286,6 +288,21 @@ Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) 
 - **`external_id` e o registro em `events_log` usam o `trck_user_id` do visitante casado**, não só o do payload. Antes, venda casada por email ia ao Meta sem `external_id` e sumia da tela de Eventos.
 - **Token no header `x-webhook-token` ou na querystring** (nem toda plataforma deixa configurar header). A URL completa nunca é logada, porque carrega o token.
 - **A assinatura do Stripe é decidida por `adapter.platform`, não pelo segmento da URL.** O `getAdapter` ignora maiúsculas; comparar a string crua deixava `/compra/Stripe` usar o adaptador do Stripe **sem conferir a assinatura** (só o token global era exigido). Corrigido em 2026-09-24.
+- **Contrato fixo `custom` (2026-10-05).** `/api/webhook/compra/custom` aceita um
+  JSON NOSSO (`transaction`, `event.status`, `payment`, `product`, `lead`,
+  `parameter.src`), para qualquer plataforma sem adaptador — direto ou via
+  n8n/Make/Zapier. O exemplo e a tabela de status são exportados de
+  `lib/webhooks/adapters/custom.ts` e a aba Webhook os importa: tela e código
+  não divergem. Leitura **estrita** (é o nosso formato), ao contrário dos
+  adaptadores de plataforma. O status é avaliado ANTES de exigir id e valor —
+  senão um `abandoned_cart` sem id viraria 400. `approved` sem valor ou moeda é
+  recusado: Purchase de valor 0 no Meta seria erro silencioso.
+- **O token aceita 4 canais, nesta ordem:** header `x-webhook-token`,
+  `Authorization: Bearer` (padrão da Bask), querystring e campo `token` do
+  corpo. Por isso o corpo passou a ser lido ANTES da autenticação. O `token` do
+  corpo é **apagado** antes do adaptador e do `raw_webhook` — senão ficaria em
+  texto puro no banco (vale também para o `token` próprio que o PerfectPay manda
+  no postback).
 
 ---
 
@@ -846,6 +863,10 @@ cliente; nada de tratamento, receita ou chat.
   `github.com/bask-labs/bask-webhooks-vercel`. O material do MCP é interno da
   Bask: usar como base de raciocínio, **nunca copiar texto dele** para o repo,
   a UI ou mensagens.
+- **ATUALIZAÇÃO 2026-10-05: o add-on Webhooks foi LIGADO** (`webhooks: true`
+  em `bask_store_info`) e o adaptador nativo existe — ver "Adaptador nativo da
+  Bask" logo abaixo. O texto deste item e do "Enquanto o add-on..." descreve o
+  estado de 2026-09-24.
 - **Webhooks são um add-on PAGO da Bask, e a loja atual não tem** (conferido em
   2026-09-24 pelo MCP: feature `webhooks` desligada). Pay-as-you-go a
   US$ 0,005 por evento entregue, com 30 dias de teste grátis; o plano Starter
@@ -904,6 +925,33 @@ cliente; nada de tratamento, receita ou chat.
   lugar nenhum** — nem em Vendas, nem como Purchase no Meta ou no GA4. Foi
   decisão do usuário adiar; o sinal de fundo de funil que resta é o
   `SubmitApplication`.
+- **Adaptador nativo da Bask (2026-10-05)** — `lib/webhooks/adapters/bask.ts`,
+  em `/api/webhook/compra/bask`, sem n8n. Por que nativo e não o `custom` com o
+  "body mapping" da Bask: não deu para confirmar que o mapping aceita valor
+  fixo em `event.status`, e o payload nativo já diz o evento (`{ type, data }`,
+  confirmado no template público). O que vale saber:
+  - **A doc do payload é fechada** (docs.bask.health exige login). Os campos
+    vieram da entidade `payment` do MCP (`id` UUID, `amountPaid`/`totalPrice`
+    decimal em dólar, `refundAmount`, `patientId`; **sem moeda e sem email**).
+    Por isso a leitura é tolerante (`data` ou `data.payment`, paciente em
+    `data.patient`) e a moeda cai em `USD`.
+  - **Payload não reconhecido devolve 400 com os NOMES das chaves, nunca os
+    valores** (podem ser PHI), e o mesmo vai pro log. É o caminho para ajustar a
+    leitura no primeiro payload real. `testMode: true` é reconhecido e ignorado
+    (200), com um resumo sim/não do que foi lido — confere a leitura sem criar
+    venda nem Purchase.
+  - **Tradução:** `paymentSucceeded` → aprovada + Purchase (inclui renovação e
+    refil, cada um com id próprio); `paymentRefunded` → reembolsada (parcial é
+    ignorado, como no Stripe); `paymentCanceled` → cancelada; `disputeCreated`
+    → chargeback; `disputeUpdated` ganha → aprovada, perdida → chargeback;
+    todo o resto (inclusive `newOrder`) → ignorado com 200.
+  - **Chave = id do PAGAMENTO.** Em disputa, `data.id` é o id da disputa — ali
+    só vale `paymentId`; sem ele o evento é recusado em vez de gravar no id
+    errado.
+  - `omitProductFromAds` é sempre `true`: o produto é o medicamento.
+  - **Risco aberto:** se o `paymentSucceeded` não trouxer email/telefone do
+    paciente, a venda é gravada e o Purchase sai, mas sem vínculo com a visita
+    e com correspondência fraca no Meta. Só o primeiro payload real responde.
 - **Duas peças, nenhuma pesada:** (1) webhook da Bask em
   `/api/webhook/compra/bask` — a fonte do dinheiro e do email do paciente, que
   depende do add-on; (2) `track.js` nas páginas da Bask via GTM — sem ele a
@@ -1305,7 +1353,7 @@ O botão exige repo público (a doc da Vercel é explícita: *"Deploy **public**
 projects"*). Antes de abrir: **o remote tem um PAT do GitHub em texto puro** no
 `.git/config` — revogue e reconfigure sem credencial. E decida conscientemente
 sobre `CLAUDE.md` (este arquivo tem nome de cliente, domínios de produção e
-histórico de incidentes) e `implementation_plan.md`.
+histórico de incidentes) (o `implementation_plan.md` foi removido; está no histórico do git).
 
 ---
 
@@ -1400,6 +1448,7 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - **País do telefone pela moeda — o que falta:** (1) publicar o código; (2) **só depois** rodar `20260923130000_remove_default_phone_country.sql` no SQL Editor — ordem inversa da habitual, porque o código antigo ainda lê e grava a coluna (salvar a aba Delay falharia e `getDispatchConfig()` cairia no padrão, perdendo modo, janela e `test_event_code`); (3) em cada deploy de cliente **fora do Brasil**, preencher `TRACKING_DEFAULT_PHONE_COUNTRY` na Vercel e redeployar.
 - **Bask — o que falta, e é do usuário/cliente:** (1) publicar o código novo (o `track.js` com `sourceUrl()` e o diálogo); (2) na Bask, tirar o id do GA4 do card Google Analytics (é o mesmo do tracker) e manter o Meta Pixel nativo desligado; (3) no container GTM cadastrado na Bask, criar a tag "HTML personalizado" com o código de Integrações → Integrar plataforma → Bask, acionada em todas as páginas, e publicar; (4) percorrer um checkout de teste em janela anônima e conferir Lead, InitiateCheckout e SubmitApplication na tela Eventos; (5) antes do lançamento, verificar o domínio `intake.` na Bask (hoje "não verificado"). **Adiado por decisão do usuário:** ligar o add-on Webhooks (pay-as-you-go, 30 dias grátis) — só aí dá para escrever o adaptador contra o payload real e ter Purchase da Bask.
 - **Clarity — o que falta:** (1) rodar `20261005120000_clarity_integration.sql` no SQL Editor de cada banco e publicar (no banco do ambiente de desenvolvimento ela já está aplicada — a tela abriu o estado "não conectado" sem erro em 2026-10-05); (2) na tela **Mapa de Calor**, seguir o assistente: colar o endereço do projeto Clarity e o token da Data Export API (gerado só para o tracker) — salvar o token já confere no Clarity e traz os primeiros dados; (4) **conferir o `payload` do primeiro snapshot** (`select payload from clarity_snapshots order by id limit 1`) contra `lib/clarity/normalize.ts` e apertar os nomes de campo — só Traffic tem formato documentado; (5) clicar num botão "Mapa" e confirmar que o Clarity abre a página certa (`url_h`), e que o ID da URL do Clarity é o mesmo do script; (6) gerar o token do MCP e conectar pelo `claude mcp add` e pelo conector do claude.ai (`?token=`); (7) em site de saúde, Masking → Strict.
+- **Webhook `custom` + Bask — o que falta (2026-10-05):** (1) rodar `20261005205000_platform_custom_bask.sql` no SQL Editor **ANTES do deploy** — sem ela o CHECK recusa a linha e a venda `custom`/`bask` não é registrada; (2) publicar o código; (3) na Bask, Settings → Webhooks & API, criar **um webhook por evento** (Payment Succeeded, Payment Refunded, Payment Canceled, Dispute Created, Dispute Updated) para `https://SEU_DOMINIO/api/webhook/compra/bask` com o header `x-webhook-token`; (4) testar com o botão Test do Payment Refunded (200 = URL e token certos; 400 traz os nomes dos campos); (5) na **primeira venda real**, conferir `raw_webhook` em Vendas e apertar a leitura do adaptador — principalmente se há email/telefone do paciente e se o valor está em dólar.
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
 
 ---
@@ -1456,6 +1505,37 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 ---
 
 ## Histórico
+
+- **2026-10-05:** Webhook de contrato fixo (`custom`) e adaptador nativo da
+  Bask. Arquivos novos: `lib/webhooks/adapters/{custom,bask}.ts` e a migration
+  `20261005205000_platform_custom_bask.sql`; alterados a rota do webhook (token
+  em 4 canais, `token` do corpo apagado antes de gravar), `adapters/index.ts`, a
+  aba Webhook (sai o PerfectPay, entra o contrato com JSON realçado e a tabela
+  de status) e o diálogo da Bask (passos 5 e 6, os webhooks de pagamento).
+  Nenhuma dependência nova.
+  - **O pedido original era só o `custom`, via n8n.** Conferido pelo MCP: o
+    add-on Webhooks da Bask foi ligado desde 2026-09-24, então a Bask chama o
+    tracker direto. O usuário pediu para checar se o body mapping aceita valor
+    fixo — **não deu para confirmar** (nem MCP nem doc pública dizem), e o
+    payload nativo já identifica o evento, então a Bask ganhou adaptador
+    próprio e não depende do mapping.
+  - **São os primeiros adaptadores a devolver `statusUpdate` e `ignored`.**
+  - **Ficou de fora, de propósito:** `perfectpay-card.tsx` e o rótulo em
+    `platform-manager.tsx` ainda falam do PerfectPay (o adaptador dele segue
+    funcionando em `/compra/perfectpay`); template de n8n para download; eventos
+    por nome via webhook.
+  - Verificado: `npm run build` com saída 0 (inclui `check:setup-sql` com o
+    `setup.sql` regerado), `tsc` e lint limpos nos 6 arquivos, **61/61 no teste
+    de mesa** dos dois adaptadores contra o código real (todos os status do
+    contrato, erros de contrato, payload da Bask achatado e aninhado, reembolso
+    parcial, disputa sem `paymentId` recusada, `testMode`, e os erros listando
+    chaves **sem** vazar email ou id), e a rota ao vivo (`next start` local)
+    recusando com 401 token errado em cada um dos 4 canais, com PerfectPay e
+    `/Stripe` inalterados.
+  - **Não verificado:** o caminho de sucesso ponta a ponta. Exigiria trocar o
+    `webhook_token_hash` de produção e a migration aplicada; fica para o primeiro
+    webhook real da Bask. O formato real do payload da Bask também é suposição
+    até lá — o adaptador foi feito para dizer o que faltou, não para adivinhar.
 
 - **2026-10-05:** Integração Microsoft Clarity — script no `track.js`, conexão
   na tela `/mapa-de-calor`, sincronização diária e MCP do deploy.
@@ -1532,7 +1612,7 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
     o caminho `apps/tracking.negou.net` na Stack e na árvore de arquitetura
     virou só o texto do domínio (`apps/tracking.seudominio.com`), sem mexer
     na inconsistência de caminho já registrada abaixo (2026-09-24, "Catraca de
-    build"); `implementation_plan.md` (fora da lista pedida, plano histórico
+    build"); `implementation_plan.md` (removido na faxina de 2026-10-05; plano histórico
     do monorepo antigo); e o `## Histórico` inteiro, intocado.
   - Verificado: `npm run build` com saída 0, `npm run lint` limpo nos 7
     arquivos tocados, `node --check public/track.js` OK, e teste de mesa da

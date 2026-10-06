@@ -31,10 +31,12 @@ const MAX_BODY_BYTES = 256_000
 /**
  * POST /api/webhook/compra/[platform]
  *
- * Recebe a notificação de compra da plataforma de venda (PerfectPay e Stripe).
+ * Recebe a notificação de compra da plataforma de venda (PerfectPay, Stripe,
+ * Bask e o contrato fixo `custom` — ver lib/webhooks/adapters).
  *
  * Fluxo:
- * 1. valida o token do webhook (o nosso, não o da plataforma)
+ * 1. valida o token do webhook (o nosso, não o da plataforma), que pode vir no
+ *    header, como Bearer, na querystring ou no campo `token` do corpo
  * 1.5. quando a plataforma assina a requisição (Stripe), confere a assinatura
  *    sobre o corpo BRUTO — é a prova criptográfica de que o payload veio de lá
  * 2. traduz o payload pelo adaptador da plataforma — que pode devolver a venda
@@ -85,12 +87,36 @@ export async function POST(
     return Response.json({ error: "plataforma_nao_suportada" }, { status: 404 })
   }
 
+  // --- 0. corpo bruto -------------------------------------------------------
+  // Lido como TEXTO antes de virar JSON porque a verificação de assinatura do
+  // Stripe é feita sobre os bytes exatos que ele mandou — reserializar o
+  // objeto muda um espaço e invalida a assinatura. E é lido ANTES da
+  // autenticação porque o token pode vir dentro do próprio corpo (abaixo).
+  const contentLength = request.headers.get("content-length")
+  if (contentLength && Number(contentLength) > MAX_BODY_BYTES) {
+    return Response.json({ error: "payload_invalido" }, { status: 400 })
+  }
+
+  let rawBody: string
+  try {
+    rawBody = await request.text()
+  } catch {
+    return Response.json({ error: "payload_invalido" }, { status: 400 })
+  }
+  const body = parseJsonText(rawBody, MAX_BODY_BYTES)
+
   // --- 1. autenticação -----------------------------------------------------
-  // Aceita o token no header (preferido) ou na querystring, porque nem toda
-  // plataforma deixa configurar header customizado na URL do webhook.
+  // Aceita o token, nesta ordem: header `x-webhook-token` (preferido),
+  // `Authorization: Bearer` (o padrão da Bask), querystring e campo `token`
+  // do corpo — nem toda plataforma ou ferramenta de automação deixa
+  // configurar header, e algumas só conseguem pôr o token no JSON.
   const url = new URL(request.url)
+  const bearer = request.headers.get("authorization")?.match(/^Bearer\s+(\S+)$/i)?.[1]
   const token =
-    request.headers.get("x-webhook-token") ?? url.searchParams.get("token") ?? ""
+    request.headers.get("x-webhook-token") ??
+    bearer ??
+    url.searchParams.get("token") ??
+    (typeof body?.token === "string" ? body.token : "")
 
   const supabase = createServiceClient()
   const { data: settings } = await supabase
@@ -109,24 +135,7 @@ export async function POST(
     return Response.json({ error: "nao_autorizado" }, { status: 401 })
   }
 
-  // --- 1.5. corpo bruto e assinatura da plataforma -------------------------
-  // O corpo é lido como TEXTO antes de virar JSON porque a verificação de
-  // assinatura do Stripe é feita sobre os bytes exatos que ele mandou —
-  // reserializar o objeto muda um espaço e invalida a assinatura. Para as
-  // outras plataformas o resultado é idêntico ao `readJsonBody` de antes:
-  // mesmo limite de tamanho, mesma validação, mesma resposta de erro.
-  const contentLength = request.headers.get("content-length")
-  if (contentLength && Number(contentLength) > MAX_BODY_BYTES) {
-    return Response.json({ error: "payload_invalido" }, { status: 400 })
-  }
-
-  let rawBody: string
-  try {
-    rawBody = await request.text()
-  } catch {
-    return Response.json({ error: "payload_invalido" }, { status: 400 })
-  }
-
+  // --- 1.5. assinatura da plataforma ---------------------------------------
   // `adapter.platform`, não o segmento cru da URL: o `getAdapter` ignora
   // maiúsculas, então `/compra/Stripe` também cai no adaptador do Stripe — e
   // comparar a string da URL deixava essa variante passar SEM conferir a
@@ -147,10 +156,13 @@ export async function POST(
   }
 
   // --- 2. tradução ---------------------------------------------------------
-  const body = parseJsonText(rawBody, MAX_BODY_BYTES)
   if (!body) {
     return Response.json({ error: "payload_invalido" }, { status: 400 })
   }
+
+  // O token do corpo já cumpriu o papel: não segue para o adaptador nem para
+  // o `raw_webhook` gravado na compra, onde ficaria em texto puro no banco.
+  delete body.token
 
   const parsed = adapter.parse(body)
   if (!parsed.ok) {
