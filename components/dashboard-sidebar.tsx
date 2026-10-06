@@ -8,6 +8,7 @@ import { BRAND_NAME } from "@/lib/branding"
 import { useIsTabletRange } from "@/hooks/use-tablet-range"
 import {
   Activity,
+  Flame,
   Globe,
   LayoutDashboard,
   Plug,
@@ -45,6 +46,7 @@ const NAV_ITEMS = [
   { href: "/leads", label: "Visitantes", icon: Users },
   { href: "/vendas", label: "Vendas", icon: ShoppingCart },
   { href: "/geo", label: "Geo", icon: Globe },
+  { href: "/mapa-de-calor", label: "Mapa de Calor", icon: Flame },
   { href: "/integracoes", label: "Integrações", icon: Plug },
   { href: "/pixels", label: "Pixels", icon: Settings },
 ] as const

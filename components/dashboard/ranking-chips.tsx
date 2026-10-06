@@ -81,7 +81,7 @@ export function RankingChips({
                   isVazio && "text-muted-foreground"
                 )}
               >
-                {isVazio ? "-" : formatar(item.valor)}
+                {formatar(item.valor)}
               </span>
             </>
           )

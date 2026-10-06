@@ -1,5 +1,7 @@
 import type { ComponentType, ReactNode } from "react"
+import { Info } from "lucide-react"
 
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
 
 /**
@@ -20,12 +22,24 @@ export function StatCard({
   legenda,
   icone: Icone,
   tom = "neutro",
+  info,
+  compacto = false,
+  acento = "primary",
+  children,
 }: {
   label: string
   valor: ReactNode
   legenda?: ReactNode
   icone?: ComponentType<{ className?: string }>
   tom?: "neutro" | "positivo" | "atencao" | "negativo"
+  /** Explicação da métrica, num balão ao lado do título — no lugar da legenda. */
+  info?: ReactNode
+  /** Menos respiro e número menor — para fileiras de 6 cards numa linha só. */
+  compacto?: boolean
+  /** Cor do gradiente e do brilho de fundo. `destructive` para métricas negativas. */
+  acento?: "primary" | "destructive"
+  /** Abaixo do número, na largura do card (ex.: o gráfico de tendência). */
+  children?: ReactNode
 }) {
   const corDaLegenda = {
     neutro: "text-muted-foreground",
@@ -34,13 +48,50 @@ export function StatCard({
     negativo: "text-destructive",
   }[tom]
 
-  return (
-    <div className="relative flex flex-col justify-center overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-6 sm:p-8 shadow-sm">
-      <div className="pointer-events-none absolute -top-16 left-1/2 h-32 w-full max-w-[200px] -translate-x-1/2 rounded-full bg-primary/15 opacity-50 blur-2xl" />
-      <div className="relative z-10 flex flex-col items-center text-center">
-        <p className="text-sm text-muted-foreground">{label}</p>
+  // Sem legenda, o tom vai para o número — senão ele não apareceria em lugar
+  // nenhum. Neutro mantém a cor normal do texto, não o cinza da legenda.
+  const corDoValor = legenda || tom === "neutro" ? undefined : corDaLegenda
 
-        <p className="mt-2 font-mono text-4xl font-semibold tabular-nums tracking-tight">
+  return (
+    <div
+      className={cn(
+        "relative flex flex-col justify-center overflow-hidden rounded-3xl border bg-gradient-to-b to-transparent shadow-sm",
+        acento === "destructive" ? "from-destructive/10" : "from-primary/5",
+        compacto ? "p-4 sm:p-5" : "p-6 sm:p-8",
+      )}
+    >
+      <div
+        className={cn(
+          "pointer-events-none absolute -top-16 left-1/2 h-32 w-full max-w-[200px] -translate-x-1/2 rounded-full opacity-50 blur-2xl",
+          acento === "destructive" ? "bg-destructive/20" : "bg-primary/15",
+        )}
+      />
+      <div className="relative z-10 flex flex-col items-center text-center">
+        <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+          <p className={cn(compacto && "leading-tight")}>{label}</p>
+          {info ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  aria-label={`Sobre ${label}`}
+                  className="rounded-full text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <Info className="size-3.5" aria-hidden />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent className="text-left leading-relaxed">{info}</TooltipContent>
+            </Tooltip>
+          ) : null}
+        </div>
+
+        <p
+          className={cn(
+            "mt-2 font-mono font-semibold tabular-nums tracking-tight",
+            compacto ? "text-3xl" : "text-4xl",
+            corDoValor,
+          )}
+        >
           {valor}
         </p>
 
@@ -51,6 +102,8 @@ export function StatCard({
           </p>
         ) : null}
       </div>
+
+      {children ? <div className="relative z-10 mt-4 w-full">{children}</div> : null}
     </div>
   )
 }

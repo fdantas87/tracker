@@ -61,7 +61,9 @@ function Local({ lead }: { lead: LeadRow }) {
 }
 
 function Compras({ lead }: { lead: LeadRow }) {
-  if (!lead.totalCompras) return <span className="text-muted-foreground">—</span>
+  if (!lead.totalCompras) {
+    return <span className="font-mono text-sm tabular-nums text-muted-foreground">0</span>
+  }
   return (
     <span className="flex flex-col">
       <span className="font-mono text-sm tabular-nums">

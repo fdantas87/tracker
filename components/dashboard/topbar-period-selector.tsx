@@ -6,7 +6,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { cn } from "@/lib/utils"
 import { PERIODOS, PERIODO_PADRAO, type PeriodoKey } from "@/lib/dashboard/filters"
 
-const SHOW_ON_ROUTES = ["/", "/eventos", "/leads", "/vendas", "/geo"]
+const SHOW_ON_ROUTES = ["/", "/eventos", "/leads", "/vendas", "/geo", "/mapa-de-calor"]
 
 export function TopbarPeriodSelector() {
   const router = useRouter()

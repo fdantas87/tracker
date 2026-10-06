@@ -36,6 +36,10 @@ const META = {
     title: "Geo",
     description: "De onde vêm os seus visitantes.",
   },
+  "/mapa-de-calor": {
+    title: "Mapa de Calor",
+    description: "Como os visitantes se comportam dentro das páginas — dados do Microsoft Clarity.",
+  },
   "/integracoes": {
     title: "Integrações",
     description:

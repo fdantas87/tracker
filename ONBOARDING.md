@@ -180,6 +180,37 @@ https://tracking.cliente-a.com.br/api/webhook/compra/perfectpay?token=SEU_TOKEN
 Em todo site listado em `TRACKING_ALLOWED_ORIGINS`. O domínio do `src` é o que
 define para onde os eventos vão.
 
+## 7.1 Microsoft Clarity (opcional, gratuito)
+
+Gravação de sessões e mapas de calor, num projeto Clarity **do cliente** (conta
+dele em clarity.microsoft.com). O tracker carrega o script sozinho — nada a
+instalar no site.
+
+Tudo acontece na tela **Mapa de Calor** (sidebar), que tem um assistente com
+os passos — não existe configuração do Clarity em outra tela.
+
+1. No Clarity: crie o projeto. Se ele oferecer instalar o código de
+   rastreamento, pule.
+2. No painel, em **Mapa de Calor**, cole o **endereço do projeto** (a URL da
+   barra do navegador, `clarity.microsoft.com/projects/view/<ID>/…`). Também
+   serve o código de rastreamento inteiro ou só o ID: o campo extrai sozinho.
+3. Para os KPIs dentro do painel e o MCP: no Clarity, Settings → Data Export →
+   **Generate new API token**, com um nome só para o tracker (ex.: `thetrack`),
+   e cole no passo 3 do assistente. Ao salvar, o token é conferido no Clarity e
+   os primeiros dados já chegam; dali em diante sincroniza sozinho às 03:00. A
+   cota é de 10 consultas por dia **por projeto**: quem usa o mesmo token divide.
+4. Antes de ligar, no Clarity:
+   - **Settings → Masking → Strict** em site de saúde ou com dado pessoal na
+     tela. O Clarity grava a tela e a URL completa.
+   - Remova qualquer outra instalação do Clarity no site (GTM, plugin), ou cada
+     sessão é gravada duas vezes.
+   - Site voltado a menores de 18 anos não pode usar o Clarity.
+   - Público na União Europeia, Reino Unido ou Suíça: o banner de cookies do
+     site precisa chamar `thetrack.clarityConsent({ analytics: true, ad: false })`.
+
+O mapa de calor em si fica no Clarity (ele não tem API nem permite embutir); a
+tela Mapa de Calor mostra onde olhar e abre o mapa da página certa num clique.
+
 ## 8. Verificar de ponta a ponta
 
 ```bash
@@ -244,3 +275,4 @@ copie o `app_metadata` do primeiro usuário se quiser que os dois vejam igual.
 - [ ] `webhook_token` gerado e cadastrado na plataforma de pagamento
 - [ ] track.js instalado nos sites
 - [ ] Visita de teste aparecendo em Leads e Eventos
+- [ ] (Opcional) Clarity conectado, masking conferido, teste do card verde

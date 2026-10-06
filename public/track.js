@@ -519,6 +519,50 @@
     }
   }
 
+  /**
+   * Microsoft Clarity: gravação de sessão e mapa de calor, num projeto Clarity
+   * por cliente (o ID vem do painel, como pixel e gtag).
+   *
+   * O identify leva SÓ o trck_user_id — um UUID aleatório, sem nada de pessoa.
+   * Email e telefone nunca vão para o Clarity: PII sai do navegador só pelo
+   * /api/identify, onde é hasheada. O id próprio é o que permite, no Clarity,
+   * achar as gravações de um visitante que aparece em Vendas ou Visitantes.
+   *
+   * ATENÇÃO: o Clarity grava a URL COMPLETA e a tela, e o sourceUrl() abaixo
+   * não o alcança. Página com dado sensível na URL ou na tela (a de obrigado
+   * da Bask leva o medicamento) precisa de máscara no próprio projeto Clarity.
+   */
+  function loadClarity(projectId) {
+    if (!projectId || !/^[a-z0-9]{6,20}$/.test(projectId)) return
+
+    if (!window.clarity) {
+      window.clarity = function () {
+        ;(window.clarity.q = window.clarity.q || []).push(arguments)
+      }
+      var script = document.createElement("script")
+      script.async = true
+      script.src = "https://www.clarity.ms/tag/" + projectId
+      document.head.appendChild(script)
+    }
+
+    window.clarity("identify", trckUserId)
+    if (clarityConsentChoice) window.clarity("consentv2", clarityConsentChoice)
+  }
+
+  function clarityCall() {
+    if (!state.clarity || typeof window.clarity !== "function") return
+    try {
+      window.clarity.apply(null, arguments)
+    } catch {
+      /* o Clarity nunca pode derrubar a captura */
+    }
+  }
+
+  /** Filtro útil no Clarity ("só sessões de quem deixou contato"), sem PII. */
+  function tagClarityIdentity() {
+    clarityCall("set", "identificado", state.identified ? "sim" : "nao")
+  }
+
   // ---------------------------------------------------------------------
   // API pública
   // ---------------------------------------------------------------------
@@ -534,6 +578,8 @@
     forms: false,
     /** O servidor já tem email ou telefone deste visitante? */
     identified: false,
+    /** Project ID do Microsoft Clarity, ou null. */
+    clarity: null,
   }
 
   var identifyPromise = null
@@ -541,6 +587,7 @@
   var lastTraits = null
   var buffer = []
   var leaving = false
+  var clarityConsentChoice = null
 
   /**
    * O corpo comum do /api/identify: cookies do Meta e do GA, UTMs e referrer.
@@ -629,6 +676,7 @@
         if (result && typeof result.identified === "boolean") {
           state.identified = result.identified
         }
+        tagClarityIdentity()
         return result
       }
     )
@@ -728,6 +776,13 @@
     var data = params || {}
     var utms = getUtms()
     var pixelFired = pixelDecision(eventName) && firePixel(eventName, data, eventId)
+
+    // No Clarity vai SÓ o nome do evento — é o que permite filtrar gravações
+    // por etapa do funil. O custom_data fica de fora: pode carregar valor,
+    // produto e o que mais o site passar. O PageView o Clarity já tem.
+    if (eventName !== "PageView" && /^[A-Za-z][A-Za-z0-9_]{0,49}$/.test(eventName)) {
+      clarityCall("event", eventName)
+    }
 
     var body = {
       event_id: eventId,
@@ -1045,6 +1100,23 @@
     id: function () {
       return trckUserId
     },
+    /**
+     * Repasse do consentimento para o Clarity (consentv2), para sites com
+     * público na União Europeia, Reino Unido ou Suíça — lá o Clarity exige o
+     * sinal desde 31/10/2025. O tracker não tem banner próprio: quem chama
+     * isto é o banner de cookies do site.
+     *   thetrack.clarityConsent({ analytics: true, ad: false })
+     */
+    clarityConsent: function (choice) {
+      var c = choice || {}
+      // Guardado porque o banner pode responder antes de a config chegar; o
+      // loadClarity repassa assim que o Clarity existir.
+      clarityConsentChoice = {
+        ad_Storage: c.ad ? "granted" : "denied",
+        analytics_Storage: c.analytics ? "granted" : "denied",
+      }
+      clarityCall("consentv2", clarityConsentChoice)
+    },
     state: state,
   }
   // Alias pra quem já instalou o script antes do rebranding (Negou -> TheTrack).
@@ -1077,6 +1149,9 @@
     loadGtag(state.ga4)
     loadPixel(state.pixels)
 
+    state.clarity = typeof config.clarity === "string" ? config.clarity : null
+    loadClarity(state.clarity)
+
     // Guardado numa variável porque o primeiro track() espera por ele: sem
     // isso o PageView chega ao servidor antes de fbp/fbc/geo, e o disparo lê
     // uma linha de visitante incompleta.
@@ -1085,6 +1160,7 @@
         if (result && typeof result.identified === "boolean") {
           state.identified = result.identified
         }
+        tagClarityIdentity()
         return result
       }
     )

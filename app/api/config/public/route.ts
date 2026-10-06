@@ -1,5 +1,6 @@
 import { createServiceClient } from "@/lib/supabase/service"
 import { jsonResponse, preflightResponse } from "@/lib/cors"
+import { getClarityProjectId } from "@/lib/settings/clarity-config"
 import { getDispatchConfig } from "@/lib/settings/dispatch-config"
 
 /**
@@ -34,13 +35,15 @@ export async function GET(request: Request) {
   try {
     const supabase = createServiceClient()
 
-    const [pixels, ga4, dispatch] = await Promise.all([
+    const [pixels, ga4, dispatch, clarity] = await Promise.all([
       supabase.from("meta_pixels").select("pixel_id").eq("is_active", true),
       supabase
         .from("ga4_accounts")
         .select("measurement_id")
         .eq("is_active", true),
       getDispatchConfig(),
+      // Nunca lança: sem a migration do Clarity, é só "Clarity desligado".
+      getClarityProjectId(),
     ])
 
     if (pixels.error || ga4.error) {
@@ -57,6 +60,9 @@ export async function GET(request: Request) {
           never_delay: dispatch.immediateEvents,
         },
         forms: { capture: dispatch.formCaptureEnabled },
+        // Público como o pixel ID: aparece no <script> de qualquer site com
+        // Clarity. O token da Data Export API nunca passa por aqui.
+        clarity,
       },
       200,
       {

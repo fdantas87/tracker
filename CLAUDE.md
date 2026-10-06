@@ -41,6 +41,8 @@ apps/tracking.seudominio.com/
 │   │   ├── faturamento/page.tsx            # ✅ fase 8b — redirect("/vendas"), rota antiga
 │   │   ├── campanhas/page.tsx              # [fase 9]
 │   │   ├── geo/page.tsx                    # ✅ fase 8c — mapa-múndi, chips de local, receita por região
+│   │   ├── mapa-de-calor/page.tsx          # ✅ Clarity — assistente de conexão OU KPIs + sinais de atrito + quebras
+│   │   ├── mapa-de-calor/actions.ts        # ✅ Clarity — conectar, token (valida + 1ª sync), pausar, MCP
 │   │   ├── integracoes/page.tsx            # ✅ Stripe — lista de plataformas conectadas
 │   │   ├── integracoes/actions.ts          # ✅ Stripe — credenciais no Vault, teste, remoção
 │   │   └── configuracoes/page.tsx          # [fase 4] CRUD de credenciais (Server Actions)
@@ -51,6 +53,8 @@ apps/tracking.seudominio.com/
 │       ├── event/route.ts                  # ✅ fase 5 — log com dedup por event_id (+ 7.5: decide atraso)
 │       ├── config/public/route.ts          # ✅ fase 5 — só IDs públicos, pro track.js
 │       ├── cron/dispatch/route.ts          # ✅ fase 7.5 — drena a fila, chamado pelo pg_cron
+│       ├── cron/clarity/route.ts           # ✅ Clarity — sincronização diária (pg_cron, mesmo token)
+│       ├── mcp/route.ts                    # ✅ Clarity — MCP do deploy (JSON-RPC à mão, token próprio)
 │       └── webhook/compra/[platform]/route.ts   # ✅ fase 7 — token, idempotência, vinculação
 ├── lib/
 │   ├── supabase/env.ts                     # ✅ fase 3 — leitura validada das env vars
@@ -93,7 +97,10 @@ apps/tracking.seudominio.com/
 │   ├── webhooks/adapters/stripe.ts         # ✅ Stripe — tradução + assinatura HMAC (server-only)
 │   ├── webhooks/status.ts                  # ✅ Bask (etapa A) — resolveStatus: a venda nunca volta para pending
 │   ├── integrations/bask-bridge.ts         # ✅ Bask — gera a ponte dataLayer -> track.js (SEM server-only)
-│   └── dispatch/purchase-dispatch.ts       # ✅ fase 7 — Purchase pro Meta + GA4
+│   ├── dispatch/purchase-dispatch.ts       # ✅ fase 7 — Purchase pro Meta + GA4
+│   ├── clarity/{constants,normalize,deeplinks,format}.ts  # ✅ Clarity — SEM server-only
+│   ├── clarity/{client,sync,queries,mcp}.ts # ✅ Clarity — server-only; sync é o ÚNICO que gasta cota
+│   └── settings/clarity-config.ts          # ✅ Clarity — Project ID p/ o track.js (memo 60s, falha = null)
 ├── components/
 │   ├── ui/                                 # ✅ shadcn (button, card, badge, separator, switch, sidebar, sheet, dropdown-menu, input, label, alert, tooltip, skeleton, table, popover, chart)
 │   ├── settings/dispatch-tab.tsx           # ✅ fase 7.5 — modo, janela, formulários, token do cron, fila
@@ -107,6 +114,9 @@ apps/tracking.seudominio.com/
 │   │                                       #    world-map-impl, ranking-chips
 │   ├── integrations/{integration-card,stripe-card}.tsx  # ✅ Stripe — cards e formulário de credenciais
 │   ├── integrations/bask-dialog.tsx        # ✅ Bask — passos de instalação + código da ponte
+│   ├── clarity/                            # ✅ Clarity — setup (assistente), forms, settings-dialog,
+│   │                                       #    status-bar, mcp-dialog, kpis, breakdown,
+│   │                                       #    top-paginas-sinal. TUDO do Clarity vive na tela Mapa de Calor
 │   ├── dashboard-sidebar.tsx               # ✅ fase 3 — navegação (drawer no celular, sidebar no desktop)
 │   ├── user-menu.tsx                       # ✅ fase 3 — conta + sair
 │   ├── page-header.tsx                     # ✅ fase 3 — cabeçalho e placeholder de fase
@@ -128,6 +138,7 @@ apps/tracking.seudominio.com/
     │                                        #    revisão geo — geo_enriquecido (8 colunas + fill_visitor_pii)
     │                                        #    fase 8b — purchases_dados_comprador, purchases_forma_pagamento
     │                                        #    Stripe — stripe_integration (platform CHECK + stripe_accounts)
+    │                                        #    Clarity — clarity_integration (accounts, snapshots, cron diário)
     │                                        #    remove_default_phone_country (país do telefone saiu do banco)
     ├── setup-preflight.sql                  # ✅ deploy 1-clique — checa Vault e banco já instalado
     ├── setup.sql                            # ✅ deploy 1-clique — GERADO, não editar (npm run build:setup-sql)
@@ -923,6 +934,135 @@ cliente; nada de tratamento, receita ou chat.
 
 ---
 
+## Microsoft Clarity (implementado, aguardando a primeira resposta real da API)
+
+Gravação de sessões e mapas de calor, num projeto Clarity **por deploy** (conta
+do cliente). Conexão **e** exploração na rota **`/mapa-de-calor`** ("Mapa de
+Calor" na sidebar); MCP próprio em `/api/mcp`.
+
+- **A tela Mapa de Calor é a dona do Clarity — e a ÚNICA.** Conectar, trocar
+  projeto/token, pausar, testar, desconectar e o MCP acontecem nela
+  (`app/(dashboard)/mapa-de-calor/actions.ts`). Integrações **não** menciona o
+  Clarity. A primeira versão pôs a conexão em Integrações e deixou na tela vazia
+  só um botão "Conectar o Clarity" que levava para lá; o usuário clicou, caiu
+  numa tela sem nenhum sinal do Clarity e não soube o que fazer — "ficou
+  praticamente inútil". **Não mova a configuração de volta, nem ponha um link
+  "configure em outra tela":** estado vazio desta tela é o assistente
+  (`components/clarity/clarity-setup.tsx`), com os passos e os campos ali mesmo.
+- **O campo do projeto aceita o que a pessoa tem à mão**, não um campo chamado
+  "Project ID": a URL do projeto (`clarity.microsoft.com/projects/view/<ID>/…`),
+  o código de rastreamento inteiro ou o ID. `extrairProjectId()`
+  (`lib/clarity/project-id.ts`, sem `server-only`) devolve só o que casa com o
+  padrão exato. A primeira versão mandava procurar o ID em "Settings → Overview"
+  — caminho que nunca foi verificado. O verificado é a URL do projeto (link
+  público de demo) e o código de rastreamento (Settings → Setup, doc oficial).
+- **Salvar o token já sincroniza e valida.** `saveClarityToken` grava o token num
+  segredo NOVO do Vault, roda `syncClarity({ inicial: true })` (as 5 visões, sem
+  reservar a cota do cron) e: se o Clarity responde 401/403 (`motivo: "token"`),
+  volta o token anterior e apaga o novo; senão, apaga o anterior. Assim a pessoa
+  nunca vê um painel vazio depois de colar o token, e um token ruim é recusado
+  na hora em vez de falhar às 03:00 sem ninguém olhando. Sobrescrever o segredo
+  no lugar perderia o token bom. Por isso a página tem `maxDuration = 90`.
+
+- **Os limites do Clarity definem a arquitetura inteira.** A Data Export API
+  (`GET clarity.ms/export-data/api/v1/project-live-insights`, Bearer JWT) aceita
+  **10 chamadas por projeto por dia**, olha só **1 a 3 dias** para trás
+  (`numOfDays`), até 3 dimensões, **1.000 linhas sem paginação**, em UTC. Por
+  isso o tracker é o **único dono da cota**: `lib/clarity/sync.ts` é o único
+  código que chama o Clarity; ele grava a resposta crua em `clarity_snapshots`
+  e a tela e o MCP leem só dali (`lib/clarity/queries.ts`, uma camada para os
+  dois — mesmos números nos dois lugares). **Não acrescente chamada ao Clarity
+  em página nem em ferramenta do MCP.**
+- **Mapa de calor e gravação NÃO têm API e NÃO podem ser embutidos** (o Clarity
+  recusa iframe de outra origem; link "anyone" expira). A tela responde ONDE
+  olhar — o top 5 de páginas embaixo de cada card de sinal de atrito, e a aba
+  "Página" de Quebras (as mais visitadas, com scroll e tempo ativo) — e cada
+  página abre o mapa dela no Clarity (`clarityHeatmapUrl`, parâmetros `date_h`/`url_h`
+  tirados do link público de demo da Microsoft, **não documentados como
+  contrato**). Fazer heatmap próprio exigiria capturar cliques no `track.js`:
+  feature nova inteira, fora do escopo por decisão.
+  - **A tabela "Páginas para olhar" saiu (2026-10-05), a pedido do usuário:**
+    repetia o que os cards de atrito já mostram. O que só ela tinha (scroll e
+    tempo ativo por página) foi para a aba "Página"; o aviso de 1.000 linhas,
+    para a seção de atrito. `paginas` (ordenada por pontuação) continua em
+    `getClarityPanorama` porque a ferramenta `clarity_friction_pages` do MCP
+    usa — não remova achando que sobrou.
+- **Conexão em dois degraus.** Só o **Project ID** (público, CHECK
+  `^[a-z0-9]{6,20}$` porque vai interpolado na URL do script) já liga o script e
+  os links. O **token da Data Export API** (Vault) é o que traz KPIs e MCP. Sem
+  token, a tela mostra o assistente no passo 3 (token) com os atalhos para
+  mapas e gravações no Clarity, em vez de cards vazios.
+- **Orçamento diário:** teto nosso de 9 (um abaixo da API — não se sabe em que
+  fuso a cota vira). O cron gasta 5 (visões `none`, `url`, `device`, `channel`,
+  `country`, uma dimensão por chamada); "Atualizar agora" gasta 2 (`none`+`url`)
+  e **não pode comer as 5 do cron** enquanto ele não rodou no dia UTC; a
+  primeira sincronização da vida do deploy é a exceção (pega tudo). Reserva
+  atômica por `clarity_reserve_call()` antes de cada chamada. O "Testar" do card
+  é uma chamada real cujo resultado é **gravado** — teste não desperdiça cota.
+- **O cron é diário, às 06:00 UTC (03:00 BRT), em `tick_clarity_sync()`**, que
+  reaproveita `dispatch_cron_url` (trocando o caminho por `/api/cron/clarity`) e
+  o mesmo token do cron do dispatch — nenhuma credencial nova. **Não dá para
+  pendurar no tique do dispatch:** ele só chama o endpoint quando há evento
+  vencido na fila. Horário fixo é o que mantém as janelas de 24 h adjacentes.
+- **Períodos de 7/30 dias somam só snapshots do cron, um por dia UTC.** Os
+  manuais se sobrepõem às janelas do cron e somá-los contaria sessões em dobro.
+  "Hoje" é a última janela de qualquer origem. "Tudo" vira 30 dias, com aviso.
+  O histórico só existe a partir do dia da conexão, porque a API não volta mais
+  que 72 h. A faixa do topo mostra só "Última atualização: 14h32" (com a data
+  quando não é de hoje) — o "N de M dias coletados" e a cota do dia saíram a
+  pedido do usuário, por poluírem a tela (2026-10-05).
+- **O formato da resposta só está PARCIALMENTE documentado.** Só a métrica
+  Traffic tem campos na doc (`totalSessionCount` como string etc.).
+  `lib/clarity/normalize.ts` lê com nomes alternativos, ignora caixa e
+  separador, e devolve **`null`, nunca 0**, quando não acha (a tela exibe esse
+  `null` como "0" — ver "Convenções → Código"). Por isso o payload
+  é guardado cru: quando a primeira resposta real for conferida, a leitura pode
+  ser apertada sem migration e sem perder histórico. **Pendência: conferir
+  `clarity_snapshots.payload` da primeira sincronização real.**
+- **Usuários em 7/30 dias são soma diária** (quem volta conta de novo) — a API
+  não permite deduplicar entre janelas, e o card diz isso. Bots aparecem como
+  contagem crua, sem percentual: a doc não diz se o total já os exclui.
+- **`track.js`:** `loadClarity()` ao lado de `loadGtag`/`loadPixel`;
+  `clarity("identify", trck_user_id)` — **só o UUID, nunca email/telefone**;
+  `clarity("event", nome)` para eventos de funil (sem `custom_data`, sem
+  `PageView`); tag `identificado = sim|nao`; `thetrack.clarityConsent()` repassa
+  `consentv2` (obrigatório para EEA/UK/CH desde 31/10/2025) e guarda a escolha
+  se o banner responder antes da config. Se `window.clarity` já existe (cliente
+  instalou por GTM), o script não é carregado de novo — mas o ideal é um dono só.
+- **O `sourceUrl()` NÃO protege o Clarity.** Ele grava a URL completa e a tela.
+  A tela de obrigado da Bask leva o medicamento na URL: em site de saúde,
+  **Masking → Strict** no projeto Clarity e não instalar em página com dado
+  clínico. O formulário de conexão diz isso, e o ONBOARDING também.
+- **`/api/config/public` não pode cair por causa do Clarity.**
+  `getClarityProjectId()` devolve `null` em qualquer erro (inclusive tabela
+  inexistente): sem a migration, o Clarity fica desligado e Meta/GA4 seguem.
+- **MCP do deploy (`/api/mcp`):** Streamable HTTP **sem sessão**, JSON-RPC à mão
+  (initialize, ping, tools/list, tools/call) — o SDK traria zod e um transporte
+  inteiro para 4 métodos de requisição/resposta. 6 ferramentas, todas lendo
+  cache: `clarity_overview`, `clarity_breakdown`, `clarity_friction_pages`,
+  `clarity_trend`, `clarity_heatmap_link`, `clarity_status`. Token próprio,
+  guardado só como SHA-256 em `clarity_accounts.mcp_token_hash`, mostrado uma
+  vez; aceito em `Authorization: Bearer` **ou** `?token=` (o conector
+  personalizado do Claude no navegador não aceita header). **Só Clarity, de
+  propósito:** o token do MCP não dá leitura de vendas nem de visitantes. Uma
+  ferramenta nova é uma entrada em `TOOLS` (`lib/clarity/mcp.ts`).
+- **O MCP oficial da Microsoft** (`@microsoft/clarity-mcp-server`, via `npx`)
+  roda na máquina do usuário e gasta a mesma cota a cada pergunta. O diálogo
+  "Conectar ao Claude" explica isso e manda usar token separado se for usá-lo.
+- **Ícone de status:** âmbar se a tabela não existe (migration pendente) ou se,
+  com Clarity ativo e com token, a última sincronização falhou ou tem mais de
+  48 h.
+
+### Ordem: migration ANTES do deploy (recomendada, não obrigatória)
+
+`20261005120000_clarity_integration.sql` cria `clarity_accounts`,
+`clarity_snapshots`, `clarity_reserve_call()`, `tick_clarity_sync()` e dois
+jobs (`clarity_sync_daily`, `clarity_snapshots_retention_daily`). Sem ela a
+captura segue intacta (Clarity desligado), a tela mostra "não conectado" e o
+ícone fica âmbar.
+
+---
+
 ## Ícone de status (sidebar)
 
 O ícone fixo no rodapé da sidebar é o lugar **único** para aviso técnico do
@@ -1192,6 +1332,7 @@ histórico de incidentes) e `implementation_plan.md`.
 
 - Server Actions para CRUD que só o próprio dashboard usa; Route Handlers só para os 3 contratos externos (captura, webhook, config pública) — ver estrutura acima
 - Sempre checar a documentação oficial (Meta Graph API, GA4) antes de fixar uma versão/endpoint — a versão da Graph API do Meta vive numa única constante (`META_GRAPH_API_VERSION`), fácil de atualizar
+- **Número nulo aparece como "0", nunca como traço** (diretriz do usuário, 2026-10-05). Vale para card, chip, tabela e balão de informação: `fmtInteiro`/`fmtPct`/`fmtDuracao` do Clarity viram "0"/"0%"/"0s", o chip de ranking vazio mostra o valor zero, a coluna Compras de Leads mostra "0". O `null` **continua nos dados** (`lib/clarity/normalize.ts` segue devolvendo `null`, e os gráficos seguem sem ponto inventado) — só a exibição troca. Campo de **texto** ausente (email, nome, telefone, UTM, CEP, IP, local, id do visitante) continua com traço: "0" num email não faz sentido.
 - **Purchase = pagamento CONFIRMADO. Sempre, em toda plataforma, sem exceção** (diretriz do usuário, 2026-09-24). O `Purchase` do Meta e o `purchase` do GA4 só saem quando o dinheiro entrou: `approved` no PerfectPay, `paid`/`async_payment_succeeded` no Stripe, `paymentSucceeded` na Bask. Pedido criado, boleto/Pix gerado, cartão só autorizado ou checkout enviado **nunca** viram Purchase — se merecem sinal, vão como outro evento padrão (na Bask, o `newOrder` vira `SubmitApplication` no Meta e `add_payment_info` no GA4). Renovação de assinatura e refil pagos **são** Purchase: o Meta não tem evento padrão de renovação, e `Subscribe` é só o início da assinatura. Ao escrever adaptador novo, o único caminho para `status: "approved"` é a confirmação do pagamento.
 
 ### Validação obrigatória antes de concluir
@@ -1258,6 +1399,7 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - **Deploy 1-clique — o que falta, e é só do usuário:** (1) **revogar o PAT do GitHub** que está em texto puro na URL do remote em `.git/config` e reconfigurar sem credencial; (2) rodar o `supabase/setup.sql` num projeto Supabase **novo**, do zero, e conferir com `verify_phase2.sql` — é o gate: não publicar um botão que aponta para um SQL não testado; (3) tornar o repo `fdantas87/tracker` público (o botão exige repo público) depois de decidir sobre `CLAUDE.md` e `implementation_plan.md`; (4) abrir a URL do botão uma vez e conferir que os 7 campos aparecem com os 3 defaults preenchidos.
 - **País do telefone pela moeda — o que falta:** (1) publicar o código; (2) **só depois** rodar `20260923130000_remove_default_phone_country.sql` no SQL Editor — ordem inversa da habitual, porque o código antigo ainda lê e grava a coluna (salvar a aba Delay falharia e `getDispatchConfig()` cairia no padrão, perdendo modo, janela e `test_event_code`); (3) em cada deploy de cliente **fora do Brasil**, preencher `TRACKING_DEFAULT_PHONE_COUNTRY` na Vercel e redeployar.
 - **Bask — o que falta, e é do usuário/cliente:** (1) publicar o código novo (o `track.js` com `sourceUrl()` e o diálogo); (2) na Bask, tirar o id do GA4 do card Google Analytics (é o mesmo do tracker) e manter o Meta Pixel nativo desligado; (3) no container GTM cadastrado na Bask, criar a tag "HTML personalizado" com o código de Integrações → Integrar plataforma → Bask, acionada em todas as páginas, e publicar; (4) percorrer um checkout de teste em janela anônima e conferir Lead, InitiateCheckout e SubmitApplication na tela Eventos; (5) antes do lançamento, verificar o domínio `intake.` na Bask (hoje "não verificado"). **Adiado por decisão do usuário:** ligar o add-on Webhooks (pay-as-you-go, 30 dias grátis) — só aí dá para escrever o adaptador contra o payload real e ter Purchase da Bask.
+- **Clarity — o que falta:** (1) rodar `20261005120000_clarity_integration.sql` no SQL Editor de cada banco e publicar (no banco do ambiente de desenvolvimento ela já está aplicada — a tela abriu o estado "não conectado" sem erro em 2026-10-05); (2) na tela **Mapa de Calor**, seguir o assistente: colar o endereço do projeto Clarity e o token da Data Export API (gerado só para o tracker) — salvar o token já confere no Clarity e traz os primeiros dados; (4) **conferir o `payload` do primeiro snapshot** (`select payload from clarity_snapshots order by id limit 1`) contra `lib/clarity/normalize.ts` e apertar os nomes de campo — só Traffic tem formato documentado; (5) clicar num botão "Mapa" e confirmar que o Clarity abre a página certa (`url_h`), e que o ID da URL do Clarity é o mesmo do script; (6) gerar o token do MCP e conectar pelo `claude mcp add` e pelo conector do claude.ai (`?token=`); (7) em site de saúde, Masking → Strict.
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
 
 ---
@@ -1314,6 +1456,45 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 ---
 
 ## Histórico
+
+- **2026-10-05:** Integração Microsoft Clarity — script no `track.js`, conexão
+  na tela `/mapa-de-calor`, sincronização diária e MCP do deploy.
+  - **Revisão no mesmo dia, depois de o usuário abrir a tela:** a conexão
+    tinha ido para Integrações, e o estado vazio do Mapa de Calor era só um
+    botão que levava para lá — onde não havia sinal nenhum do Clarity. Erro de
+    UX meu, apontado pelo usuário ("dificílimo saber o que fazer"). Agora a tela
+    é a única dona do Clarity: assistente inline de 4 passos, campo que aceita
+    URL/código/ID, token validado e sincronizado ao salvar, e "Configurar" para
+    o resto. Integrações voltou byte a byte ao que era antes do Clarity.
+    Verificado: build e lint limpos; **23/23** no teste de mesa de
+    `extrairProjectId` (ID, URLs, snippet com quebras de linha, domínio falso,
+    injeção — toda saída casa com o padrão do CHECK); **26/26 no teste
+    autenticado real** contra o servidor local e o banco, nos 3 estados da tela
+    (sem conta, só com ID, com token + snapshot), com Integrações sem nenhuma
+    menção ao Clarity e a guarda de rota de pé. Conta, segredo, snapshot e
+    usuário de teste apagados no fim (conferido). **Não verificado:** as Server
+    Actions pelo navegador (salvar token → sincronizar → painel), que dependem
+    de um token real do Clarity.
+  Ver "Microsoft Clarity". Migration `20261005120000_clarity_integration.sql`;
+  nenhuma dependência e nenhuma variável de ambiente nova.
+  - **Pesquisa que definiu o desenho:** a Data Export API tem 10 chamadas/dia e
+    72 h de alcance; mapa de calor não tem API nem embed; o MCP oficial gasta a
+    mesma cota. Daí: tracker dono da cota, snapshot diário guardado, tela e MCP
+    lendo do banco, e mapa de calor por deeplink.
+  - **O plano previa o SDK do MCP; ficou JSON-RPC à mão** (4 métodos, sem
+    estado) — mesma postura de não puxar SDK que o Stripe já seguiu.
+  - Verificado: `npm run build` verde (com `check:actions` e `check:setup-sql`),
+    lint limpo nos arquivos novos e tocados (os avisos/erros restantes são
+    pré-existentes em `perfectpay-card.tsx`, `site-tab.tsx`, `stripe-card.tsx`),
+    `node --check public/track.js`, e **29/29 no teste de mesa** do normalizador
+    (exemplo exato da doc, strings numéricas, nomes alternativos, `null` nunca
+    virando 0, lixo, truncamento em 1.000 linhas, agregação ponderada, deeplinks
+    e formatação).
+  - **Não verificado:** nada rodou contra o banco nem contra o Clarity — a
+    migration não foi aplicada (regra do projeto) e não havia token de projeto
+    real. Faltam: formato real das métricas além de Traffic, a sincronização de
+    ponta a ponta, o `/api/mcp` num cliente MCP real, o deeplink `url_h`, e a
+    tela aberta num navegador.
 
 - **2026-09-30:** Clique como conversão por classe `thetrack-<Evento>`, filtro
   das chaves do pixel e os dois consertos de envio na saída da página (ver
