@@ -767,6 +767,43 @@ faturamento. **Nenhuma migration**: todas as colunas já existiam desde
 
 ---
 
+## Visão geral (implementado, sem as métricas de mídia)
+
+`lib/dashboard/overview.ts` → `getOverview(periodo)`; a página lê `?periodo=`
+(o seletor da topbar já aparecia em `/`, mas a página o ignorava e quase tudo
+era `0` fixo).
+
+- **Tudo é contado em PESSOAS ÚNICAS, nunca em visitas** (diretriz do usuário,
+  2026-10-06: medir "a % de pessoas reais que convertem"). A chave de pessoa é o
+  e-mail do visitante (`visitors.email`, minúsculo); sem e-mail, o próprio
+  `trck_user_id`. Funde a mesma pessoa em 2 dispositivos **só se ela deixou
+  e-mail** — anônimo em dois aparelhos segue contando 2, e não há como evitar sem
+  identidade. A compra cai na pessoa do visitante vinculado (e-mail dele), senão
+  pelo e-mail da compra, senão pelo dispositivo, senão pela transação.
+- **Lead = pessoa com evento `Lead` ou `CompleteRegistration` no período, de
+  QUALQUER `dispatch_status`** (pendente, falho e `skipped` incluídos) e mesmo
+  anônima. O status é o destino do envio ao Meta, não se o lead aconteceu. Foi o
+  furo do relato "a tela de Eventos tem Leads e Conv. Leads fica 0%": nada era
+  calculado.
+- **Visitantes únicos = união** das pessoas vistas em `events_log` com as criadas
+  em `visitors` no período. Só `visitors.created_at` deixaria um visitante antigo
+  virar lead sem contar como visitante, e a taxa passaria de 100%.
+- **Conv. Clientes usa só os clientes que também são visitantes do período**
+  (`clientesNoFunil`): venda sem visita no período (boleto de visitante antigo,
+  venda sem vínculo) passaria de 100%. "Novos Clientes" e faturamento contam todos.
+- **Conv. Leads e Conv. Clientes dividem por visitantes únicos** (decisão do usuário);
+  Por Visitante/Lead/Cliente = faturamento ÷ cada base. Faturamento, vendas e
+  ticket vêm de `getVendasResumo` (mesma fonte da tela de Vendas) e só contam
+  `approved`; antes "Vendas" contava toda linha de `purchases`.
+- **O PostgREST corta em 1.000 linhas por requisição**: `.limit(20_000)` sozinho
+  traz mil, em silêncio. `overview.ts` pagina com `.range()` (`lerTudo`). As
+  agregações antigas de `events.ts`/`vendas.ts`/`leads.ts` têm esse mesmo limite
+  e **não** foram corrigidas aqui.
+- **ROAS, CPA, CPL, CAC e Connect Rate seguem em 0**: dependem de gasto e
+  cliques de anúncio (fase 9). Não estimar.
+
+---
+
 ## Tela de Integrações + Stripe (implementado)
 
 Rota `/integracoes`, na lista principal da sidebar. Ela reúne o que fala **com**

@@ -3,8 +3,11 @@
 import { motion, type Variants } from "framer-motion"
 import { NeuroNoise } from "@paper-design/shaders-react"
 import { ShaderCard } from "@/components/ui/shader-card"
+import { formatarMoeda } from "@/lib/dashboard/format"
 
 export interface OverviewData {
+  /** Moeda das vendas do período (ISO 4217). */
+  moeda: string
   faturamento: number
   roas: number
   vendas: number
@@ -40,8 +43,7 @@ export function OverviewDashboard({ data }: { data: OverviewData }) {
   }
 
   // Formatadores
-  const formatCurrency = (value: number) =>
-    new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" }).format(value)
+  const formatCurrency = (value: number) => formatarMoeda(value, data.moeda)
   const formatNumber = (value: number) => new Intl.NumberFormat("pt-BR").format(value)
   const formatPercent = (value: number) => `${value.toFixed(1)}%`
 
@@ -98,7 +100,7 @@ export function OverviewDashboard({ data }: { data: OverviewData }) {
       {/* Camada 3: 6 Colunas Bootstrap (50% max width) -> 3 items */}
       <motion.div variants={item} className="w-full max-w-3xl">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <Chip label="Visitantes" value={formatNumber(data.visitantes)} />
+          <Chip label="Visitantes únicos" value={formatNumber(data.visitantes)} />
           <Chip label="Novos Clientes" value={formatNumber(data.novosClientes)} />
           <Chip label="Ticket Médio" value={formatCurrency(data.ticketMedio)} />
         </div>
