@@ -960,6 +960,11 @@ cliente; nada de tratamento, receita ou chat.
   - **Risco aberto:** se o `paymentSucceeded` não trouxer email/telefone do
     paciente, a venda é gravada e o Purchase sai, mas sem vínculo com a visita
     e com correspondência fraca no Meta. Só o primeiro payload real responde.
+- **O diálogo da Bask tem duas abas (2026-10-05):** "Navegador (GTM)" (passos
+  1–4, código da ponte) e "Webhooks de pagamento", que espelha o formulário da
+  Bask — URL, Key e cada Event Type copiáveis com um clique. O **Value** (o
+  token) não tem botão Copiar, de propósito: só existe como hash, e copiar um
+  texto-guia faria a pessoa colar lixo na Bask e tomar 401.
 - **Duas peças, nenhuma pesada:** (1) webhook da Bask em
   `/api/webhook/compra/bask` — a fonte do dinheiro e do email do paciente, que
   depende do add-on; (2) `track.js` nas páginas da Bask via GTM — sem ele a

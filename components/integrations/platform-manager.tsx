@@ -50,7 +50,7 @@ export function PlatformManager({
         </DropdownMenuContent>
       </DropdownMenu>
 
-      <BaskDialog open={baskOpen} onOpenChange={setBaskOpen} />
+      <BaskDialog open={baskOpen} onOpenChange={setBaskOpen} hasWebhookToken={hasWebhookToken} />
 
       <StripeFormDialog
         open={stripeOpen} 
