@@ -166,18 +166,9 @@ function parse(body: Record<string, unknown>): AdapterResult {
   const email = pick(fontesPaciente, ["email", "patientEmail", "customerEmail"])
   const telefone = pick(fontesPaciente, ["phone", "phoneNumber", "mobilePhone", "patientPhone"])
 
-  // Pagamento de teste da Bask: reconhecido, mas nunca gravado nem enviado ao
-  // Meta. A resposta diz o que foi encontrado (sim/não, sem valores) — é a
-  // forma de conferir a leitura dos campos sem criar venda falsa.
-  if (data.testMode === true || payment.testMode === true || body.testMode === true) {
-    const sim = (v: unknown) => (v === null || v === undefined ? "nao" : "sim")
-    return {
-      ok: true,
-      ignored:
-        `modo_teste; reconhecido: id=sim valor=${sim(pago)} email=${sim(email)} ` +
-        `telefone=${sim(telefone)}; chaves recebidas: ${descreverChaves(body)}`,
-    }
-  }
+  // Pagamento de teste da Bask: a rota o trata em modo simulação (não grava
+  // venda, não envia ao Meta/GA4; só registra o evento em Eventos).
+  const isTest = data.testMode === true || payment.testMode === true || body.testMode === true
 
   // Sem valor não há Purchase honesto: um evento de valor 0 no Meta seria um
   // erro silencioso. Melhor o 400 com as chaves, que diz onde o valor está.
@@ -189,7 +180,10 @@ function parse(body: Record<string, unknown>): AdapterResult {
   return {
     ok: true,
     purchase: {
-      transactionId,
+      // Prefixo no teste: o id do payload de teste é sempre o mesmo, e sem ele
+      // uma venda real futura com esse id colidiria com o evento simulado.
+      transactionId: isTest ? `test_${transactionId}` : transactionId,
+      isTest,
       status: "approved",
       platformStatus: tipo,
 

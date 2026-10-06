@@ -83,6 +83,13 @@ export type NormalizedPurchase = {
    * sempre das outras plataformas.
    */
   omitProductFromAds?: boolean
+
+  /**
+   * Pagamento de teste da plataforma (botão "Test" da Bask). A rota não grava
+   * em `purchases` nem manda nada ao Meta/GA4: só monta os payloads e registra
+   * o evento em `events_log`, pra conferir o que SERIA enviado.
+   */
+  isTest?: boolean
 }
 
 /**

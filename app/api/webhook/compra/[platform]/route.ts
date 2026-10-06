@@ -28,6 +28,9 @@ import { resolveStatus } from "@/lib/webhooks/status"
 
 const MAX_BODY_BYTES = 256_000
 
+/** Visitante fixo dos pagamentos de teste (botão "Test" da plataforma). */
+const TEST_VISITOR_ID = "seed_webhook_teste"
+
 /**
  * POST /api/webhook/compra/[platform]
  *
@@ -183,6 +186,51 @@ export async function POST(
   }
 
   const purchase = parsed.purchase
+
+  // Pagamento de teste da plataforma: simulação. Não grava venda, não enriquece
+  // visitante e não envia nada ao Meta/GA4 — só registra o Purchase em Eventos,
+  // pra conferir o payload que SERIA enviado. O payload de teste não traz
+  // vínculo com ninguém, então o evento é atribuído a um visitante FIXO de teste
+  // (prefixo `seed_`, que o `npm run seed:limpar` já apaga), com dados
+  // plausíveis só pra external_id, fbp, geo etc. aparecerem preenchidos. Nunca
+  // um visitante real: o evento de mentira sujaria a jornada de um lead.
+  if (purchase.isTest) {
+    const { data: visitanteTeste } = await supabase
+      .from("visitors")
+      .upsert(
+        {
+          trck_user_id: TEST_VISITOR_ID,
+          fbp: "fb.1.1700000000000.1234567890",
+          ip: "203.0.113.10",
+          user_agent: "Mozilla/5.0 (teste de webhook)",
+          geo_country: "US",
+          geo_region: "CA",
+          geo_city: "Los Angeles",
+        },
+        { onConflict: "trck_user_id" }
+      )
+      .select("*")
+      .maybeSingle()
+
+    await dispatchPurchase({
+      purchase,
+      eventId: `purchase_${purchase.transactionId}`,
+      visitor: visitanteTeste ?? null,
+      dryRun: true,
+    })
+
+    return Response.json(
+      {
+        ok: true,
+        test: true,
+        simulated: true,
+        visitor_linked: Boolean(visitanteTeste),
+        note: "Nada foi gravado em Vendas nem enviado ao Meta/GA4.",
+      },
+      { status: 200 }
+    )
+  }
+
   // O país do telefone vem da moeda DESTA transação, não de um valor fixo do
   // deploy: o mesmo cliente pode vender em BRL e em USD.
   const phoneCountry = obterPaisDaMoeda(purchase.currency)

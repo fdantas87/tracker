@@ -10,8 +10,8 @@ import {
   hashState,
   hashZip,
 } from "@/lib/crypto/hash"
-import { sendToAllGa4 } from "@/lib/ga4/mp"
-import { sendToAllPixels } from "@/lib/meta/capi"
+import { buildGa4Payload, sendToAllGa4, type Ga4EventInput } from "@/lib/ga4/mp"
+import { buildMetaPayload, sendToAllPixels, type MetaEventInput } from "@/lib/meta/capi"
 import { getDispatchConfig } from "@/lib/settings/dispatch-config"
 import { createServiceClient } from "@/lib/supabase/service"
 import { obterPaisDaMoeda } from "@/lib/webhooks/adapters"
@@ -36,6 +36,11 @@ export type PurchaseDispatchParams = {
   /** event_id determinístico, derivado do transaction_id. */
   eventId: string
   visitor: Record<string, unknown> | null
+  /**
+   * Simulação (botão "Test" da plataforma): monta os payloads e registra o
+   * evento em `events_log`, mas NÃO chama Meta nem GA4 e NÃO toca em `purchases`.
+   */
+  dryRun?: boolean
 }
 
 /**
@@ -50,7 +55,7 @@ function asString(value: unknown): string | null {
 export async function dispatchPurchase(
   params: PurchaseDispatchParams
 ): Promise<void> {
-  const { purchase, eventId, visitor } = params
+  const { purchase, eventId, visitor, dryRun } = params
   const supabase = createServiceClient()
 
   // A venda casada por email ou telefone não traz trck_user_id no payload,
@@ -69,14 +74,16 @@ export async function dispatchPurchase(
     ga4EventName: "purchase",
   })
 
-  await supabase
-    .from("purchases")
-    .update({
-      response_meta: metaResult.results,
-      response_ga4: ga4Result.results,
-      ga_client_id: gaClientId,
-    })
-    .eq("transaction_id", purchase.transactionId)
+  if (!dryRun) {
+    await supabase
+      .from("purchases")
+      .update({
+        response_meta: metaResult.results,
+        response_ga4: ga4Result.results,
+        ga_client_id: gaClientId,
+      })
+      .eq("transaction_id", purchase.transactionId)
+  }
 
   // Registra também em events_log, pra a compra aparecer no funil e na tela
   // de Eventos junto com o resto da jornada.
@@ -141,8 +148,7 @@ async function sendServerConversion(input: ServerConversionInput) {
   // Meta e GA4 são independentes: em paralelo, o tempo total é o do mais lento
   // em vez da soma dos dois. Importa porque isto roda dentro do orçamento de
   // tempo da função serverless.
-  const [metaResult, ga4Result] = await Promise.all([
-    sendToAllPixels({
+  const metaInput: MetaEventInput = {
       eventName: input.metaEventName,
       eventId,
       eventTime: Math.floor(Date.now() / 1000),
@@ -187,8 +193,9 @@ async function sendServerConversion(input: ServerConversionInput) {
         clientIpAddress: asString(visitor?.ip),
         clientUserAgent: asString(visitor?.user_agent),
       },
-    }),
-    sendToAllGa4({
+  }
+
+  const ga4Input: Ga4EventInput = {
       clientId: gaClientId ?? "",
       eventName: input.ga4EventName,
       sessionId: asString(visitor?.ga_session_id),
@@ -208,7 +215,41 @@ async function sendServerConversion(input: ServerConversionInput) {
             },
           ]
         : null,
-    }),
+  }
+
+  if (input.dryRun) {
+    return {
+      metaResult: {
+        payload: buildMetaPayload(metaInput),
+        results: [
+          {
+            pixelId: "-",
+            label: "simulação",
+            ok: true,
+            status: null,
+            response: { simulado: "teste: nada foi enviado ao Meta" },
+          },
+        ],
+      },
+      ga4Result: {
+        payload: buildGa4Payload(ga4Input),
+        results: [
+          {
+            measurementId: "-",
+            label: "simulação",
+            ok: true,
+            status: null,
+            response: { simulado: "teste: nada foi enviado ao GA4" },
+          },
+        ],
+      },
+      gaClientId,
+    }
+  }
+
+  const [metaResult, ga4Result] = await Promise.all([
+    sendToAllPixels(metaInput),
+    sendToAllGa4(ga4Input),
   ])
 
   return { metaResult, ga4Result, gaClientId }
