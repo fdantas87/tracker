@@ -108,7 +108,7 @@ function parse(body: Record<string, unknown>): AdapterResult {
   const transactionId =
     pick([data, dispute], ["paymentId", "payment_id"], LIMITS.id) ??
     pick([payment], ["id"], LIMITS.id) ??
-    (ehPagamento ? pick([data], ["id"], LIMITS.id) : null)
+    (ehPagamento ? pick([data], ["transactionId", "transaction_id", "id"], LIMITS.id) : null)
 
   if (!transactionId) return erro(`${tipo} sem id do pagamento`, body)
 
