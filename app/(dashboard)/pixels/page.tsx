@@ -1,5 +1,6 @@
 import { getSettings, listAccounts } from "@/lib/settings/queries"
 import { PageHeader } from "@/components/page-header"
+import { DesktopOnly } from "@/components/desktop-only"
 import { DestinationsView } from "@/components/settings/destinations-view"
 import { pageTitle } from "@/lib/branding"
 
@@ -22,11 +23,13 @@ export default async function PixelsPage() {
         description="Destinos de envio e credenciais. Os segredos são gravados cifrados no Vault e nunca voltam para a tela."
       />
 
-      <DestinationsView 
-        pixels={pixels} 
-        ga4Accounts={ga4Accounts} 
-        adAccounts={adAccounts} 
-      />
+      <DesktopOnly acao="configurar os pixels">
+        <DestinationsView
+          pixels={pixels}
+          ga4Accounts={ga4Accounts}
+          adAccounts={adAccounts}
+        />
+      </DesktopOnly>
     </>
   )
 }

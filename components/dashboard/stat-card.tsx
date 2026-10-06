@@ -55,9 +55,9 @@ export function StatCard({
   return (
     <div
       className={cn(
-        "relative flex flex-col justify-center overflow-hidden rounded-3xl border bg-gradient-to-b to-transparent shadow-sm",
+        "relative flex min-w-0 flex-col justify-center overflow-hidden rounded-3xl border bg-gradient-to-b to-transparent shadow-sm",
         acento === "destructive" ? "from-destructive/10" : "from-primary/5",
-        compacto ? "p-4 sm:p-5" : "p-6 sm:p-8",
+        compacto ? "p-4 sm:p-5" : "p-5 sm:p-8",
       )}
     >
       <div
@@ -87,8 +87,8 @@ export function StatCard({
 
         <p
           className={cn(
-            "mt-2 font-mono font-semibold tabular-nums tracking-tight",
-            compacto ? "text-3xl" : "text-4xl",
+            "mt-2 max-w-full break-words font-mono font-semibold tabular-nums tracking-tight",
+            compacto ? "text-2xl sm:text-3xl" : "text-3xl sm:text-4xl",
             corDoValor,
           )}
         >

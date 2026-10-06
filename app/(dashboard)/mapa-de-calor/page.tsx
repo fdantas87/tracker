@@ -7,6 +7,7 @@ import { ClaritySetup } from "@/components/clarity/clarity-setup"
 import { ClarityStatusBar } from "@/components/clarity/clarity-status-bar"
 import { TopPaginasSinal } from "@/components/clarity/top-paginas-sinal"
 import { StatCard } from "@/components/dashboard/stat-card"
+import { DesktopOnly } from "@/components/desktop-only"
 import { diaLocal } from "@/lib/dashboard/timezone"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -296,7 +297,9 @@ export default async function MapaDeCalorPage({ searchParams }: { searchParams: 
             </AlertDescription>
           </Alert>
         ) : null}
-        <ClaritySetup account={account} />
+        <DesktopOnly acao="conectar o Clarity">
+          <ClaritySetup account={account} />
+        </DesktopOnly>
       </div>
     )
   }

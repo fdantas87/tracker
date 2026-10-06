@@ -60,7 +60,7 @@ export function EventsFilters({
     Boolean(evento || q || searchParams.get("status")) || periodo !== PERIODO_PADRAO
 
   return (
-    <div className="glass -mt-2 mb-2 flex flex-col items-center rounded-xl p-1.5 sm:-mt-4 sm:flex-row">
+    <div className="glass mb-2 flex flex-col items-stretch gap-y-1 rounded-xl p-1.5 sm:-mt-4 sm:flex-row sm:items-center">
       <Select
         value={evento ?? TODOS}
         onValueChange={(v) => navegar({ evento: v === TODOS ? null : v })}
@@ -101,7 +101,7 @@ export function EventsFilters({
         />
       </form>
 
-      <div className="flex shrink-0 items-center gap-2 px-2">
+      <div className="flex shrink-0 items-center justify-end gap-2 px-2 empty:hidden">
         {pendente ? (
           <Loader2 className="size-3.5 animate-spin text-muted-foreground" aria-label="Carregando" />
         ) : null}

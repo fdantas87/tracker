@@ -102,7 +102,9 @@ export function VendasFilters({
   const ativos = [status, pagamento, q].filter(Boolean).length
 
   return (
-    <div className="glass -mt-2 mb-2 flex flex-col items-center rounded-xl p-1.5 sm:-mt-4 sm:flex-row">
+    // No celular: os dois selects lado a lado e a busca na linha de baixo, em
+    // vez de três linhas empilhadas e centralizadas.
+    <div className="glass mb-2 grid grid-cols-2 items-center gap-y-1 rounded-xl p-1.5 sm:-mt-4 sm:flex sm:flex-row">
       <Select
         value={status ?? TODOS}
         onValueChange={(v) => navegar({ status: v === TODOS ? null : v })}
@@ -142,7 +144,7 @@ export function VendasFilters({
       <div className="hidden sm:block h-4 w-px shrink-0 bg-border/50 mx-1" />
 
       <form
-        className="relative flex-1 w-full"
+        className="relative col-span-2 w-full flex-1"
         onSubmit={(e) => {
           e.preventDefault()
           const valor = new FormData(e.currentTarget).get("q")
@@ -162,7 +164,7 @@ export function VendasFilters({
         />
       </form>
 
-      <div className="flex shrink-0 items-center gap-2 px-2">
+      <div className="col-span-2 flex shrink-0 items-center justify-end gap-2 px-2 empty:hidden">
         {pendente ? (
           <Loader2
             className="size-3.5 animate-spin text-muted-foreground"

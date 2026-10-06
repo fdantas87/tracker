@@ -93,7 +93,7 @@ export function VisitorChips({
             >
               {valor.toLocaleString("pt-BR")}
             </span>
-            <span className="whitespace-nowrap text-center text-[7px] font-bold uppercase tracking-tighter text-muted-foreground sm:text-[8px] md:text-[10px] lg:text-xs">
+            <span className="max-w-full truncate text-center text-[9px] font-bold uppercase tracking-tighter text-muted-foreground sm:text-[10px] lg:text-xs">
               {label}
             </span>
           </Link>

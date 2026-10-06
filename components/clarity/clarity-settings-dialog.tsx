@@ -72,7 +72,7 @@ export function ClaritySettingsDialog({ account }: { account: ClarityAccountRow 
       <DialogTrigger asChild>
         <ClarityNavButton icone={<Settings2 />} rotulo="Configurar" />
       </DialogTrigger>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-lg max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Microsoft Clarity</DialogTitle>
           <DialogDescription>

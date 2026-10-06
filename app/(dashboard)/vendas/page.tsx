@@ -96,7 +96,7 @@ function Cards({ resumo }: { resumo: VendasResumo }) {
   )
 
   return (
-    <section className="grid gap-4 sm:grid-cols-2">
+    <section className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4">
       <StatCard
         label="Faturamento Total"
         valor={formatarMoeda(resumo.faturamento, moeda)}
@@ -166,7 +166,7 @@ async function Conteudo({ filtros }: { filtros: VendaFilters }) {
       ) : null}
 
       <div className="grid gap-4 lg:grid-cols-[1fr_400px] xl:grid-cols-[1fr_480px]">
-        <div className="flex flex-col gap-4">
+        <div className="flex min-w-0 flex-col gap-4">
           <Cards resumo={resumo} />
 
           {resumo.moedasMultiplas ? (
@@ -183,7 +183,7 @@ async function Conteudo({ filtros }: { filtros: VendaFilters }) {
           ) : null}
         </div>
 
-        <div className="flex flex-col justify-start">
+        <div className="flex min-w-0 flex-col justify-start">
           <PaymentMethodChart dados={resumo.porPagamento} moeda={resumo.moeda} />
         </div>
       </div>

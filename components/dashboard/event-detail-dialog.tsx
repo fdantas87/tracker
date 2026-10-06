@@ -132,7 +132,7 @@ export function EventDetailDialog({ id, eventName }: { id: string; eventName: st
         </Button>
       </DialogTrigger>
 
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+      <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="font-mono text-base">{eventName}</DialogTitle>
           <DialogDescription>

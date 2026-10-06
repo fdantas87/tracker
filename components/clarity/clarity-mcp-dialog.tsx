@@ -44,7 +44,7 @@ export function ClarityMcpDialog({ hasMcpToken }: { hasMcpToken: boolean }) {
       <DialogTrigger asChild>
         <ClarityNavButton icone={<Bot />} rotulo="Conectar ao Claude" />
       </DialogTrigger>
-      <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="sm:max-w-xl max-h-[90dvh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Consultar o Clarity pelo Claude (MCP)</DialogTitle>
           <DialogDescription>

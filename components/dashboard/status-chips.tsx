@@ -40,7 +40,8 @@ export function StatusChips({
   ]
 
   return (
-    <div className="flex w-full gap-1 sm:gap-2">
+    // No celular, 3 por linha: 6 chips numa linha só obrigavam rótulo de 7px.
+    <div className="grid w-full grid-cols-3 gap-1.5 sm:flex sm:gap-2">
       {chips.map(({ chave, label, valor, classe }) => {
         const selecionado = ativo === chave
 
@@ -68,7 +69,7 @@ export function StatusChips({
             >
               {valor.toLocaleString("pt-BR")}
             </span>
-            <span className="whitespace-nowrap text-center text-[7px] font-bold uppercase tracking-tighter text-muted-foreground sm:text-[8px] md:text-[10px] lg:text-xs">
+            <span className="max-w-full truncate text-center text-[10px] font-bold uppercase tracking-tighter text-muted-foreground lg:text-xs">
               {label}
             </span>
           </Link>

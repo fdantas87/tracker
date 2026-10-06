@@ -7,8 +7,6 @@ import { ensureCronDispatchConfigured } from "@/lib/settings/cron-autoconfig"
 import { createClient } from "@/lib/supabase/server"
 import { SIDEBAR_COOKIE_NAME } from "@/lib/sidebar-cookie"
 import { DashboardSidebar } from "@/components/dashboard-sidebar"
-import { ThemeToggle } from "@/components/theme-toggle"
-import { UserMenu } from "@/components/user-menu"
 import {
   SidebarInset,
   SidebarProvider,
@@ -77,7 +75,9 @@ export default async function DashboardLayout({
       />
       <SidebarInset>
         <TopbarHeader email={email} />
-        <div className="flex flex-1 flex-col gap-6 p-4 sm:p-6">{children}</div>
+        {/* min-w-0: sem ele, uma tabela larga define a largura mínima do
+            flex item e a página inteira ganha scroll horizontal no celular. */}
+        <div className="flex min-w-0 flex-1 flex-col gap-6 p-4 sm:p-6">{children}</div>
       </SidebarInset>
     </SidebarProvider>
   )

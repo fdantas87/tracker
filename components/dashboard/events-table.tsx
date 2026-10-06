@@ -71,6 +71,88 @@ function CaminhoBadge({ pixelFired }: { pixelFired: boolean }) {
   )
 }
 
+function Visitante({ evento }: { evento: EventRow }) {
+  if (evento.visitorEmail) {
+    return <span className="block truncate text-sm">{evento.visitorEmail}</span>
+  }
+  return (
+    <span
+      className="block truncate font-mono text-xs text-muted-foreground"
+      title={evento.trckUserId ?? undefined}
+    >
+      {evento.trckUserId ? `${evento.trckUserId.slice(0, 12)}…` : "—"}
+    </span>
+  )
+}
+
+function Disparo({ evento, agora }: { evento: EventRow; agora: number }) {
+  const espera =
+    evento.dispatchStatus === "pending" ? faltaPara(evento.dispatchAfter, agora) : null
+
+  return (
+    <div className="flex flex-col gap-1">
+      <span className="flex items-center gap-2">
+        <DispatchStatusBadge status={evento.dispatchStatus} />
+        {evento.dispatchAttempts > 1 ? (
+          <span
+            className="font-mono text-xs text-muted-foreground tabular-nums"
+            title={`${evento.dispatchAttempts} tentativas`}
+          >
+            ×{evento.dispatchAttempts}
+          </span>
+        ) : null}
+      </span>
+
+      {espera ? <span className="text-xs text-muted-foreground">sai {espera}</span> : null}
+
+      {evento.dispatchError ? (
+        <span
+          className="line-clamp-2 max-w-[22rem] text-xs text-destructive"
+          title={evento.dispatchError}
+        >
+          {evento.dispatchError}
+        </span>
+      ) : null}
+    </div>
+  )
+}
+
+/**
+ * Abaixo de `md` a tabela vira lista: com 4 colunas e `whitespace-nowrap` ela
+ * passava de 700px. Origem e local ficam no modal de detalhe.
+ */
+function EventosLista({ rows, agora }: { rows: EventRow[]; agora: number }) {
+  return (
+    <ul className="glass divide-y overflow-hidden rounded-2xl md:hidden">
+      {rows.map((evento) => (
+        <li key={evento.id} className="flex items-start gap-3 px-4 py-3">
+          <div className="min-w-0 flex-1">
+            <span className="flex items-center gap-1.5 text-sm font-medium">
+              <span className="truncate">{evento.eventName}</span>
+              <CaminhoBadge pixelFired={evento.pixelFired} />
+            </span>
+            <Visitante evento={evento} />
+            <span
+              className="mt-0.5 block font-mono text-xs text-muted-foreground tabular-nums"
+              title={formatarCompleto(evento.eventTime)}
+            >
+              {formatarDataHora(evento.eventTime)}
+            </span>
+          </div>
+          <div className="flex shrink-0 items-start gap-1">
+            {/* Teto de largura: sem ele, um dispatch_error longo empurra a
+                coluna da esquerda até sumir. */}
+            <div className="max-w-[10rem]">
+              <Disparo evento={evento} agora={agora} />
+            </div>
+            <EventDetailDialog id={evento.id} eventName={evento.eventName} />
+          </div>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 export function EventsTable({
   rows,
   filtrado,
@@ -84,28 +166,24 @@ export function EventsTable({
   if (!rows.length) return <Vazio filtrado={filtrado} />
 
   return (
-    <div className="glass overflow-x-auto rounded-2xl">
-      <Table>
-        <TableHeader>
-          <TableRow className="hover:bg-transparent">
-            <TableHead>Quando</TableHead>
-            <TableHead>Evento</TableHead>
-            <TableHead>Visitante</TableHead>
-            <TableHead>Disparo</TableHead>
-            <TableHead className="hidden lg:table-cell">Origem</TableHead>
-            <TableHead className="hidden xl:table-cell">Local</TableHead>
-            <TableHead className="w-0" />
-          </TableRow>
-        </TableHeader>
+    <>
+      <EventosLista rows={rows} agora={agora} />
+      <div className="glass hidden overflow-x-auto rounded-2xl md:block">
+        <Table>
+          <TableHeader>
+            <TableRow className="hover:bg-transparent">
+              <TableHead>Quando</TableHead>
+              <TableHead>Evento</TableHead>
+              <TableHead>Visitante</TableHead>
+              <TableHead>Disparo</TableHead>
+              <TableHead className="hidden lg:table-cell">Origem</TableHead>
+              <TableHead className="hidden xl:table-cell">Local</TableHead>
+              <TableHead className="w-0" />
+            </TableRow>
+          </TableHeader>
 
-        <TableBody>
-          {rows.map((evento) => {
-            const espera =
-              evento.dispatchStatus === "pending"
-                ? faltaPara(evento.dispatchAfter, agora)
-                : null
-
-            return (
+          <TableBody>
+            {rows.map((evento) => (
               <TableRow key={evento.id}>
                 <TableCell
                   className="font-mono text-xs whitespace-nowrap tabular-nums"
@@ -122,45 +200,11 @@ export function EventsTable({
                 </TableCell>
 
                 <TableCell className="max-w-[16rem]">
-                  {evento.visitorEmail ? (
-                    <span className="block truncate text-sm">{evento.visitorEmail}</span>
-                  ) : (
-                    <span
-                      className="block truncate font-mono text-xs text-muted-foreground"
-                      title={evento.trckUserId ?? undefined}
-                    >
-                      {evento.trckUserId ? `${evento.trckUserId.slice(0, 12)}…` : "—"}
-                    </span>
-                  )}
+                  <Visitante evento={evento} />
                 </TableCell>
 
                 <TableCell>
-                  <div className="flex flex-col gap-1">
-                    <span className="flex items-center gap-2">
-                      <DispatchStatusBadge status={evento.dispatchStatus} />
-                      {evento.dispatchAttempts > 1 ? (
-                        <span
-                          className="font-mono text-xs text-muted-foreground tabular-nums"
-                          title={`${evento.dispatchAttempts} tentativas`}
-                        >
-                          ×{evento.dispatchAttempts}
-                        </span>
-                      ) : null}
-                    </span>
-
-                    {espera ? (
-                      <span className="text-xs text-muted-foreground">sai {espera}</span>
-                    ) : null}
-
-                    {evento.dispatchError ? (
-                      <span
-                        className="line-clamp-2 max-w-[22rem] text-xs text-destructive"
-                        title={evento.dispatchError}
-                      >
-                        {evento.dispatchError}
-                      </span>
-                    ) : null}
-                  </div>
+                  <Disparo evento={evento} agora={agora} />
                 </TableCell>
 
                 <TableCell className="hidden max-w-[12rem] text-sm lg:table-cell">
@@ -175,10 +219,10 @@ export function EventsTable({
                   <EventDetailDialog id={evento.id} eventName={evento.eventName} />
                 </TableCell>
               </TableRow>
-            )
-          })}
-        </TableBody>
-      </Table>
-    </div>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
+    </>
   )
 }

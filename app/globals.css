@@ -184,6 +184,14 @@
     background-repeat: no-repeat;
   }
 
+  /* No celular, `fixed` é ignorado pelo Safari iOS e força repaint a cada
+     scroll nos outros; o gradiente fica no topo da página, rolando junto. */
+  @media (max-width: 767px) {
+    body {
+      background-attachment: scroll;
+    }
+  }
+
   /* Gradiente radial sutil — fundo escuro profundo com leve realce verde/ciano */
   .dark body {
     background-image:
@@ -227,5 +235,14 @@
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
     border: 1px solid var(--border);
+  }
+
+  /* Blur de 16px em cada card e cada linha pesa no GPU do celular; com
+     8px o efeito de camada continua visível. */
+  @media (max-width: 767px) {
+    .glass {
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+    }
   }
 }

@@ -60,7 +60,9 @@ export function TopbarHeader({ email }: { email: string }) {
   const triggerTooltip = state === "expanded" ? "Recolher menu" : "Expandir menu"
 
   return (
-    <header className="sticky top-0 z-50 flex h-14 shrink-0 items-center gap-4 border-b bg-background/80 px-4 backdrop-blur-md">
+    // z-40, não z-50: Sheet e Dialog são z-50, e a topbar sticky ficava por
+    // cima do overlay deles.
+    <header className="sticky top-0 z-40 flex h-14 shrink-0 items-center gap-2 border-b bg-background/80 px-3 backdrop-blur-md sm:gap-4 sm:px-4">
       <Tooltip>
         <TooltipTrigger asChild>
           <div>
@@ -80,7 +82,7 @@ export function TopbarHeader({ email }: { email: string }) {
         </div>
       )}
 
-      <div className="ml-auto flex shrink-0 items-center gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-1 sm:gap-2">
         <TopbarPeriodSelector />
         <div className="h-4 w-px shrink-0 bg-border hidden sm:block mx-1" aria-hidden />
         <ThemeToggle />

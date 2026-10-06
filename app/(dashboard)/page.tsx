@@ -25,7 +25,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Sea
   const periodo = lerPeriodo(await searchParams)
   const o = await getOverview(periodo)
 
-  // ROAS, CPA, CPL, CAC e Connect Rate dependem de gasto e cliques de anúncio
+  // ROAS, CPA, CPL, CAC, custo por visitante e Connect Rate dependem de gasto e cliques de anúncio
   // (fase 9, Campanhas) e ficam em 0 até lá — ver `lib/dashboard/overview.ts`.
   const dashboardData: OverviewData = {
     moeda: o.moeda,
@@ -36,6 +36,7 @@ export default async function OverviewPage({ searchParams }: { searchParams: Sea
     visitantes: o.visitantes,
     novosClientes: o.clientes,
     ticketMedio: o.ticketMedio,
+    custoPorVisitante: 0,
     valorPorVisitante: razao(o.faturamento, o.visitantes),
     valorPorLead: razao(o.faturamento, o.leads),
     valorPorCliente: razao(o.faturamento, o.clientes),

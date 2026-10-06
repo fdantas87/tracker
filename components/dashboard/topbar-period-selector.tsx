@@ -5,6 +5,13 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import { cn } from "@/lib/utils"
 import { PERIODOS, PERIODO_PADRAO, type PeriodoKey } from "@/lib/dashboard/filters"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 
 const SHOW_ON_ROUTES = ["/", "/eventos", "/leads", "/vendas", "/geo", "/mapa-de-calor"]
 
@@ -39,24 +46,42 @@ export function TopbarPeriodSelector() {
     })
   }
 
+  const chaves = Object.keys(PERIODOS) as PeriodoKey[]
+
   return (
-    <div className="flex shrink-0 max-w-full overflow-x-auto rounded-lg border p-0.5 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      {(Object.keys(PERIODOS) as PeriodoKey[]).map((chave) => (
-        <button
-          key={chave}
-          type="button"
-          onClick={() => setPeriodo(chave)}
-          aria-pressed={periodo === chave}
-          className={cn(
-            "shrink-0 rounded-md px-2.5 py-1 text-xs font-medium transition-colors sm:px-3 sm:py-1.5",
-            periodo === chave
-              ? "bg-primary/15 text-primary"
-              : "text-muted-foreground hover:text-foreground"
-          )}
-        >
-          {PERIODOS[chave].label}
-        </button>
-      ))}
-    </div>
+    <>
+      {/* Abaixo de sm, 4 pílulas + tema + conta não cabem em 360px ao lado do
+          título: vira um select compacto. */}
+      <Select value={periodo} onValueChange={(v) => setPeriodo(v as PeriodoKey)}>
+        <SelectTrigger size="sm" aria-label="Período" className="text-xs sm:hidden">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent align="end">
+          {chaves.map((chave) => (
+            <SelectItem key={chave} value={chave} className="text-xs">
+              {PERIODOS[chave].label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <div className="hidden rounded-lg border p-0.5 sm:flex">
+        {chaves.map((chave) => (
+          <button
+            key={chave}
+            type="button"
+            onClick={() => setPeriodo(chave)}
+            aria-pressed={periodo === chave}
+            className={cn(
+              "shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+              periodo === chave
+                ? "bg-primary/15 text-primary"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {PERIODOS[chave].label}
+          </button>
+        ))}
+      </div>
+    </>
   )
 }
