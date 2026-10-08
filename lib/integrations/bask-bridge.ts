@@ -66,6 +66,17 @@ export function baskBridgeSnippet(trackerOrigin: string): string {
     return out
   }
 
+  // Primeiro valor preenchido (texto ou numero) entre as fontes e os nomes.
+  function first(sources, keys) {
+    for (var s = 0; s < sources.length; s++) {
+      for (var k = 0; k < keys.length; k++) {
+        var v = sources[s] && sources[s][keys[k]]
+        if ((typeof v === "string" && v) || (typeof v === "number" && isFinite(v))) return String(v)
+      }
+    }
+    return ""
+  }
+
   var sent = {}
 
   function handle(item) {
@@ -95,6 +106,11 @@ export function baskBridgeSnippet(trackerOrigin: string): string {
 
       var data = money(ecommerce)
       if (orderId) data.order_id = orderId
+      // Id do paciente na Bask: e o unico elo com o webhook de pagamento, que
+      // nao traz email. Nome do campo nao confirmado, por isso a lista.
+      var patientId = first([ecommerce, item, ecommerce.user || {}, item.user || {}],
+        ["patientId", "patient_id", "userId", "user_id", "customerId", "customer_id"])
+      if (patientId) data.patient_id = patientId
       var traits = {
         email: ecommerce.email,
         phone: ecommerce.phone,

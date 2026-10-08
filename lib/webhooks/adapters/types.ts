@@ -66,6 +66,13 @@ export type NormalizedPurchase = {
   /** Nosso trck_user_id, quando a plataforma repassou o parâmetro do checkout. */
   trckUserId: string | null
 
+  /**
+   * Id do cliente NA PLATAFORMA (o `patientId` da Bask), quando o payload traz.
+   * É o vínculo de quem não manda email no webhook: a ponte do navegador grava
+   * o mesmo id no `SubmitApplication`, e as renovações caem na mesma pessoa.
+   */
+  platformCustomerId?: string | null
+
   utmSource: string | null
   utmMedium: string | null
   utmCampaign: string | null

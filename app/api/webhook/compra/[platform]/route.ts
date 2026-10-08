@@ -253,7 +253,34 @@ export async function POST(
     )
 
     // --- 3. vinculação com o visitante -------------------------------------
-    const match = await findVisitor(purchase, phoneCountry, anterior)
+    const encontrado = await findVisitor(adapter.platform, purchase, phoneCountry, anterior)
+
+    // Sem vínculo nenhum: o comprador vira um visitante mínimo, com o email e o
+    // telefone que houver. É uma pessoa real que comprou — é o que faz o
+    // Purchase entrar em Eventos e no funil, e as renovações do mesmo cliente
+    // caírem nele (passo 3.5 do findVisitor).
+    // `match_found` continua falso nesse caso (e quando o achado é o próprio
+    // visitante mínimo, de uma venda anterior): ninguém foi atribuído.
+    const matchFound = encontrado.method !== "none"
+    const match: VisitorMatch = encontrado.visitor
+      ? encontrado
+      : { visitor: await criarVisitanteMinimo(adapter.platform, purchase, phoneCountry), method: "none" }
+
+    // O que o payload não trouxe vem do visitante casado (o payload sempre tem
+    // precedência). Na Bask o webhook de pagamento não traz email nem UTM, mas
+    // a visita tem: email do identify da tela de obrigado, UTM da 1ª visita.
+    // Nome e telefone o visitante só guarda em hash, então não há o que copiar
+    // para a tela — para o Meta eles seguem indo, lidos do visitante no disparo.
+    const doVisitante = (campo: string): string | null => {
+      const valor = matchFound ? match.visitor?.[campo] : null
+      return typeof valor === "string" && valor ? valor : null
+    }
+    purchase.buyerEmail ??= doVisitante("email")
+    purchase.utmSource ??= doVisitante("utm_source")
+    purchase.utmMedium ??= doVisitante("utm_medium")
+    purchase.utmCampaign ??= doVisitante("utm_campaign")
+    purchase.utmTerm ??= doVisitante("utm_term")
+    purchase.utmContent ??= doVisitante("utm_content")
 
     // --- 4. gravação idempotente -------------------------------------------
     // `transaction_id` é UNIQUE. O upsert atualiza a linha quando a mesma
@@ -296,7 +323,7 @@ export async function POST(
         geo_region: (match.visitor?.geo_region as string | null) ?? null,
         geo_city: (match.visitor?.geo_city as string | null) ?? null,
         match_method: match.method,
-        match_found: Boolean(match.visitor),
+        match_found: matchFound,
         raw_webhook: body,
       },
       { onConflict: "transaction_id" }
@@ -477,6 +504,7 @@ type VisitorMatch = {
  * saber de onde ela veio seria muito pior do que registrá-la sem atribuição.
  */
 async function findVisitor(
+  platform: string,
   purchase: NormalizedPurchase,
   phoneCountry: string,
   anterior: { trck_user_id: unknown; match_method: unknown } | null
@@ -514,6 +542,57 @@ async function findVisitor(
     if (data && data.length > 0) return { visitor: data[0], method: "phone" }
   }
 
+  // 3.5. Id do cliente na plataforma (o `patientId` da Bask, cujo webhook de
+  // pagamento não traz email). Três lugares, do mais para o menos direto:
+  //   a) o SubmitApplication que a ponte do GTM gravou na tela de obrigado com
+  //      esse id — é o próprio navegador do comprador, vínculo direto;
+  //   b) uma venda anterior do mesmo cliente que já tinha vínculo (renovação e
+  //      refil: o custom_data do evento é zerado em 14 dias, a venda não);
+  //   c) o visitante mínimo criado na primeira venda sem vínculo.
+  // Gravado como `trck_user_id`: o vínculo é com o id do visitante, e o CHECK
+  // de `match_method` não tem outro valor.
+  const clienteId = purchase.platformCustomerId
+  if (clienteId) {
+    const { data: evento } = await supabase
+      .from("events_log")
+      .select("trck_user_id")
+      .eq("event_name", "SubmitApplication")
+      .eq("custom_data->>patient_id", clienteId)
+      .order("created_at", { ascending: false })
+      .limit(1)
+      .maybeSingle()
+
+    const { data: vendaAnterior } = evento
+      ? { data: null }
+      : await supabase
+          .from("purchases")
+          .select("trck_user_id")
+          .eq("platform", platform)
+          .eq("raw_webhook->data->>patientId", clienteId)
+          .not("trck_user_id", "is", null)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle()
+
+    const candidatos = [
+      evento?.trck_user_id,
+      vendaAnterior?.trck_user_id,
+      visitanteMinimoId(platform, clienteId),
+    ].filter((id): id is string => typeof id === "string" && id.length > 0)
+
+    for (const id of candidatos) {
+      const { data: visitor } = await supabase
+        .from("visitors")
+        .select("*")
+        .eq("trck_user_id", id)
+        .maybeSingle()
+      // O visitante mínimo é a mesma pessoa, mas não é atribuição: "none".
+      if (visitor) {
+        return { visitor, method: id === visitanteMinimoId(platform, clienteId) ? "none" : "trck_user_id" }
+      }
+    }
+  }
+
   // 4. Vínculo preservado: esta transação já foi gravada antes com um
   // visitante? Então o webhook atual só não trouxe o dado — ele não desfez o
   // vínculo. Mantém o que já existia, inclusive o `match_method` original,
@@ -532,7 +611,7 @@ async function findVisitor(
       return {
         visitor,
         method:
-          metodo === "trck_user_id" || metodo === "email" || metodo === "phone"
+          metodo === "trck_user_id" || metodo === "email" || metodo === "phone" || metodo === "none"
             ? metodo
             : "trck_user_id",
       }
@@ -540,4 +619,41 @@ async function findVisitor(
   }
 
   return { visitor: null, method: "none" }
+}
+
+/**
+ * Id do visitante mínimo de um comprador sem vínculo: pelo id do cliente na
+ * plataforma quando há (renovações caem na mesma pessoa), senão pela transação.
+ */
+function visitanteMinimoId(platform: string, clienteId?: string | null, transactionId?: string): string {
+  return clienteId ? `${platform}_${clienteId}` : `${platform}_tx_${transactionId}`
+}
+
+/**
+ * Cria (ou reaproveita) o visitante de um comprador que não casou com nenhuma
+ * visita. Só grava os campos que existem: um upsert com null apagaria o que
+ * uma venda anterior já tinha deixado.
+ */
+async function criarVisitanteMinimo(
+  platform: string,
+  purchase: NormalizedPurchase,
+  phoneCountry: string
+): Promise<Record<string, unknown> | null> {
+  const supabase = createServiceClient()
+  const linha: Record<string, unknown> = {
+    trck_user_id: visitanteMinimoId(platform, purchase.platformCustomerId, purchase.transactionId),
+  }
+  if (purchase.buyerEmail) {
+    linha.email = purchase.buyerEmail.toLowerCase()
+    linha.email_hash = hashEmail(purchase.buyerEmail)
+  }
+  const phoneHash = hashPhone(purchase.buyerPhone, phoneCountry)
+  if (phoneHash) linha.phone_hash = phoneHash
+
+  const { data } = await supabase
+    .from("visitors")
+    .upsert(linha, { onConflict: "trck_user_id" })
+    .select("*")
+    .maybeSingle()
+  return data ?? null
 }

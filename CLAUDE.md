@@ -994,9 +994,23 @@ cliente; nada de tratamento, receita ou chat.
     só vale `paymentId`; sem ele o evento é recusado em vez de gravar no id
     errado.
   - `omitProductFromAds` é sempre `true`: o produto é o medicamento.
-  - **Risco aberto:** se o `paymentSucceeded` não trouxer email/telefone do
-    paciente, a venda é gravada e o Purchase sai, mas sem vínculo com a visita
-    e com correspondência fraca no Meta. Só o primeiro payload real responde.
+  - **Payload real conferido (2026-10-08), e ele NÃO traz email:** `data` tem
+    `transactionId`, `amount`, `status`, `testMode`, `date`, `patientId` e
+    `paymentMethod { type, card { brand, last4 } }`. O botão **Test** manda
+    dados inventados com `testMode: false` e `amount: 0` — por isso **valor 0 =
+    simulação** no adaptador (gravar venda de US$ 0 foi o bug que motivou isto).
+  - **Vínculo pelo `patientId`** (passo 3.5 do `findVisitor`): a ponte do GTM
+    grava `patient_id` no `custom_data` do `SubmitApplication`; o webhook acha
+    esse evento, senão uma venda anterior do mesmo paciente (`raw_webhook`,
+    porque `custom_data` é zerado em 14 dias), senão o visitante mínimo
+    `bask_<patientId>`. **O nome do campo no `dataLayer` não foi confirmado** — a
+    ponte tenta `patientId`/`userId`/`customerId`; conferir no Preview do GTM.
+  - **Venda sem vínculo ganha um visitante mínimo** (`<plataforma>_<cliente>` ou
+    `<plataforma>_tx_<transação>`), para todas as plataformas: o Purchase entra
+    em Eventos e no funil. `match_found` continua `false`.
+  - **Email e UTM da venda vêm do visitante casado** quando o payload não traz.
+    Nome e telefone não: o visitante só os guarda em hash (vão ao Meta, não à
+    tela). Para tê-los na tela, o caminho é o body mapping do webhook na Bask.
 - **O diálogo da Bask tem duas abas (2026-10-05):** "Navegador (GTM)" (passos
   1–4, código da ponte) e "Webhooks de pagamento", que espelha o formulário da
   Bask — URL, Key e cada Event Type copiáveis com um clique. O **Value** (o

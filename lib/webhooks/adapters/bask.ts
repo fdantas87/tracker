@@ -49,6 +49,24 @@ const EVENTOS: Record<string, Efeito> = {
 /** A Bask vende nos EUA; o modelo dela guarda valor decimal em dólar, sem campo de moeda. */
 const MOEDA_PADRAO = "USD"
 
+/**
+ * Primeiro valor MAIOR QUE ZERO entre os campos. Um `"0"` num campo não pode
+ * esconder o valor real que está no seguinte; nada positivo = 0 (e não null),
+ * porque o campo existir com zero é diferente de não existir.
+ */
+function valorPositivo(fontes: Record<string, unknown>[], chaves: string[]): number | null {
+  let achou = false
+  for (const fonte of fontes) {
+    for (const chave of chaves) {
+      const valor = cleanAmount(fonte[chave])
+      if (valor === null) continue
+      if (valor > 0) return valor
+      achou = true
+    }
+  }
+  return achou ? 0 : null
+}
+
 function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -120,9 +138,9 @@ function parse(body: Record<string, unknown>): AdapterResult {
   }
 
   const fontesPagamento = [payment, data]
-  const pago = cleanAmount(
-    pick(fontesPagamento, ["amountPaid", "amount_paid", "totalPrice", "total_price", "amount", "total"])
-  )
+  const pago = valorPositivo(fontesPagamento, [
+    "amount", "amountPaid", "amount_paid", "totalPrice", "total_price", "total",
+  ])
 
   if (efeito.kind === "refund") {
     // Reembolso parcial: a venda continua valendo, só menor, e `purchases`
@@ -166,16 +184,30 @@ function parse(body: Record<string, unknown>): AdapterResult {
   const email = pick(fontesPaciente, ["email", "patientEmail", "customerEmail"])
   const telefone = pick(fontesPaciente, ["phone", "phoneNumber", "mobilePhone", "patientPhone"])
 
-  // Pagamento de teste da Bask: a rota o trata em modo simulação (não grava
-  // venda, não envia ao Meta/GA4; só registra o evento em Eventos).
-  const isTest = data.testMode === true || payment.testMode === true || body.testMode === true
-
-  // Sem valor não há Purchase honesto: um evento de valor 0 no Meta seria um
-  // erro silencioso. Melhor o 400 com as chaves, que diz onde o valor está.
+  // Sem campo de valor nenhum: 400 com as chaves, que diz onde o valor está.
   if (pago === null) return erro("paymentSucceeded sem valor reconhecível", body)
 
+  // Pagamento de teste: a rota o trata em modo simulação (não grava venda, não
+  // envia ao Meta/GA4; só registra o evento em Eventos). O botão "Test" da Bask
+  // manda dados inventados com `testMode: false` e `amount: 0` (visto no
+  // primeiro payload real, 2026-10-08) — então valor zero também é teste. Um
+  // pagamento real de 0 (cupom de 100%) não teria nada a dizer ao Meta mesmo.
+  const isTest =
+    data.testMode === true || payment.testMode === true || body.testMode === true || pago === 0
+
   const product = asObject(data.product)
-  const metodoBruto = pick(fontesPagamento, ["paymentMethod", "paymentMethodType", "payment_method", "cardBrand"])
+  // `paymentMethod` chega como objeto: { type: "card", card: { brand, last4 } }.
+  const metodo = asObject(data.paymentMethod ?? payment.paymentMethod)
+  const metodoBruto =
+    pick([asObject(metodo.card)], ["brand"]) ??
+    pick([metodo], ["type"]) ??
+    pick(fontesPagamento, ["paymentMethod", "paymentMethodType", "payment_method", "cardBrand"])
+  const ehCartao =
+    pick([metodo], ["type"])?.toLowerCase() === "card" ||
+    (metodoBruto !== null && /card|visa|master|amex|discover/i.test(metodoBruto))
+
+  const patientId = pick([data, patient, payment], ["patientId", "patient_id"], LIMITS.id) ??
+    pick([patient], ["id"], LIMITS.id)
 
   return {
     ok: true,
@@ -190,9 +222,7 @@ function parse(body: Record<string, unknown>): AdapterResult {
       amount: pago,
       currency: pick(fontesPagamento, ["currency"], 8)?.toUpperCase() ?? MOEDA_PADRAO,
 
-      paymentMethod: metodoBruto
-        ? /card|visa|master|amex|discover/i.test(metodoBruto) ? "credit_card" : "other"
-        : null,
+      paymentMethod: ehCartao ? "credit_card" : metodoBruto ? "other" : null,
       platformPaymentMethod: metodoBruto,
 
       productName: pick([product], ["name"]) ?? pick([data], ["productName"]),
@@ -205,9 +235,11 @@ function parse(body: Record<string, unknown>): AdapterResult {
       buyerLastName: pick(fontesPaciente, ["lastName", "last_name"]),
       buyerPostalCode: pick([address, patient, customer, data], ["zipCode", "zip", "postalCode", "postal_code"]),
 
-      // O checkout da Bask não repassa o nosso id: o vínculo com a visita é
-      // pelo email/telefone, que a ponte do GTM já gravou no visitante.
+      // O checkout da Bask não repassa o nosso id, e o webhook de pagamento
+      // não traz email: o vínculo com a visita é pelo id do paciente, que a
+      // ponte do GTM grava no SubmitApplication (ver findVisitor na rota).
       trckUserId: null,
+      platformCustomerId: patientId,
 
       utmSource: null,
       utmMedium: null,
