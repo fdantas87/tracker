@@ -138,9 +138,16 @@ function parse(body: Record<string, unknown>): AdapterResult {
   }
 
   const fontesPagamento = [payment, data]
-  const pago = valorPositivo(fontesPagamento, [
-    "amount", "amountPaid", "amount_paid", "totalPrice", "total_price", "total",
-  ])
+  // O campo nativo `amount` do webhook vem em CENTAVOS (payload real de
+  // 2026-10-08: 24700 para uma venda de US$ 247). Os demais nomes seguem em
+  // dólar, como no modelo de dados da Bask.
+  const emCentavos = valorPositivo(fontesPagamento, ["amount"])
+  const pago =
+    emCentavos !== null
+      ? Math.round(emCentavos) / 100
+      : valorPositivo(fontesPagamento, [
+          "amountPaid", "amount_paid", "totalPrice", "total_price", "total",
+        ])
 
   if (efeito.kind === "refund") {
     // Reembolso parcial: a venda continua valendo, só menor, e `purchases`
