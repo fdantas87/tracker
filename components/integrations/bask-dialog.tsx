@@ -91,12 +91,12 @@ export function BaskDialog({
                 </p>
               </li>
               <li>
-                <p className="font-medium">2. Cole o código</p>
+                <p className="font-medium">2. Cole o código no GTM</p>
                 <p className="mt-1 text-[13px] text-muted-foreground">
-                  No container do Google Tag Manager cadastrado na Bask, crie uma tag
-                  “HTML personalizado” acionada em todas as páginas e publique. A
-                  alternativa é o Global JavaScript do questionário, com a versão sem
-                  a tag &lt;script&gt;.
+                  No Google Tag Manager cadastrado na Bask, abra a tag “HTML
+                  personalizado” do tracker (ou crie uma, acionada em All Pages),
+                  apague todo o HTML que estiver lá, cole o código e clique em
+                  Enviar para publicar. Sempre que este código mudar, repita.
                 </p>
                 <SnippetBox snippet={snippet} />
               </li>
@@ -165,20 +165,21 @@ export function BaskDialog({
             <section className="flex flex-col gap-1">
               <p className="text-sm font-medium">Confira a ligação</p>
               <p className="text-[13px] text-muted-foreground">
-                O botão Test do webhook Payment Refunded deve responder 200 sem
-                criar nada: prova URL e token. 401 é token errado; um 400 traz os
-                nomes dos campos recebidos, para ajustar a leitura. A primeira
-                venda real aparece em Vendas.
+                O botão Test da Bask manda um pagamento inventado, de valor 0: ele
+                responde 200 e aparece só em Eventos, como simulação, nunca em
+                Vendas. 401 é token errado; um 400 traz os nomes dos campos
+                recebidos. A primeira venda real aparece em Vendas.
               </p>
             </section>
 
             <div className="flex items-start gap-2 rounded-xl bg-cyan/5 border border-cyan/30 p-3">
               <Info className="mt-0.5 size-4 shrink-0 text-cyan" />
               <p className="text-xs">
-                Só Payment Succeeded vira Purchase. A venda é ligada à visita pelo
-                email ou telefone do paciente, que o código da aba Navegador já
-                registra no questionário. O nome do medicamento fica só no painel,
-                nunca vai ao Meta nem ao GA4.
+                Só Payment Succeeded vira Purchase. O webhook da Bask não traz o
+                email do paciente: a venda é ligada à visita pelo id do paciente,
+                que o código da aba Navegador grava na tela de obrigado. Sem ele,
+                a venda entra com valor, mas sem cliente e sem UTM. O nome do
+                medicamento nunca vai ao Meta nem ao GA4.
               </p>
             </div>
           </TabsContent>
@@ -259,15 +260,20 @@ function TokenRow({ hasWebhookToken }: { hasWebhookToken: boolean }) {
   )
 }
 
+/**
+ * Um código, um botão. O "Global JavaScript" do questionário já foi oferecido
+ * como alternativa e saiu: ele roda num sandbox que bloqueia o carregamento do
+ * track.js, então a segunda opção só confundia (ver "Integração Bask" no CLAUDE.md).
+ */
 function SnippetBox({ snippet }: { snippet: string }) {
-  const [copied, setCopied] = React.useState<"gtm" | "js" | null>(null)
+  const [copied, setCopied] = React.useState(false)
+  const text = `<script>\n${snippet}\n</script>`
 
-  async function copy(kind: "gtm" | "js") {
-    const text = kind === "gtm" ? `<script>\n${snippet}\n</script>` : snippet
+  async function copy() {
     try {
       await navigator.clipboard.writeText(text)
-      setCopied(kind)
-      window.setTimeout(() => setCopied(null), 2000)
+      setCopied(true)
+      window.setTimeout(() => setCopied(false), 2000)
     } catch {
       // Clipboard bloqueado: o código segue visível para seleção manual.
     }
@@ -276,23 +282,12 @@ function SnippetBox({ snippet }: { snippet: string }) {
   return (
     <div className="mt-3 flex flex-col gap-2">
       <pre className="max-h-56 overflow-auto rounded-xl border border-primary/20 bg-background/80 p-3 font-mono text-[11px] leading-relaxed">
-        {snippet}
+        {text}
       </pre>
-      <div className="flex flex-col gap-2 sm:flex-row">
-        <Button type="button" className="h-11 flex-1 gap-2 rounded-xl" onClick={() => copy("gtm")}>
-          {copied === "gtm" ? <Check className="size-4" /> : <Copy className="size-4" />}
-          {copied === "gtm" ? "Copiado" : "Copiar para o GTM"}
-        </Button>
-        <Button
-          type="button"
-          variant="secondary"
-          className="h-11 flex-1 gap-2 rounded-xl"
-          onClick={() => copy("js")}
-        >
-          {copied === "js" ? <Check className="size-4" /> : <Copy className="size-4" />}
-          {copied === "js" ? "Copiado" : "Copiar para Global JavaScript"}
-        </Button>
-      </div>
+      <Button type="button" className="h-11 gap-2 rounded-xl" onClick={copy}>
+        {copied ? <Check className="size-4" /> : <Copy className="size-4" />}
+        {copied ? "Copiado" : "Copiar código"}
+      </Button>
     </div>
   )
 }
