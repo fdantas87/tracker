@@ -38,10 +38,8 @@ type Condicao =
   | { op: "or"; filtro: string }
   | { op: "is-null"; coluna: string }
   | { op: "not-null"; coluna: string }
-  | { op: "in"; coluna: string; valores: string[] }
-  | { op: "not-in"; coluna: string; valores: string[] }
 
-function condicoesDe(filtros: LeadFilters, idsComCompra?: string[]): Condicao[] {
+function condicoesDe(filtros: LeadFilters): Condicao[] {
   const cond: Condicao[] = []
 
   const { inicio, fim } = periodoIntervalo(filtros.periodo)
@@ -59,36 +57,7 @@ function condicoesDe(filtros: LeadFilters, idsComCompra?: string[]): Condicao[] 
     }
   }
 
-  if (filtros.converteu !== "todos" && idsComCompra) {
-    cond.push({
-      op: filtros.converteu === "sim" ? "in" : "not-in",
-      coluna: "trck_user_id",
-      valores: idsComCompra.length ? idsComCompra : ["__nenhum__"],
-    })
-  }
-
   return cond
-}
-
-/**
- * IDs de visitante com pelo menos uma compra — só quando o filtro "converteu"
- * está ativo. Mesmo teto de 20k já aceito em `getStatusCounts`/`getSerieDiaria`
- * de `events.ts`: um scan limitado em vez de uma view/RPC nova.
- */
-async function idsComCompra(
-  supabase: Awaited<ReturnType<typeof createClient>>
-): Promise<string[]> {
-  const { data, error } = await supabase
-    .from("purchases")
-    .select("trck_user_id")
-    .not("trck_user_id", "is", null)
-    .limit(20_000)
-
-  if (error || !data) return []
-
-  return [
-    ...new Set((data as { trck_user_id: string | null }[]).map((r) => r.trck_user_id as string)),
-  ]
 }
 
 export type LeadRow = {
@@ -182,20 +151,24 @@ export async function listLeads(filtros: LeadFilters): Promise<{
 }> {
   const supabase = await createClient()
 
-  const ids = filtros.converteu !== "todos" ? await idsComCompra(supabase) : undefined
-
   const de = (filtros.pagina - 1) * PAGE_SIZE
 
-  let q = supabase.from("visitors").select(COLUNAS_LISTA, { count: "exact" })
-  for (const c of condicoesDe(filtros, ids)) {
+  // "Converteu" é uma junção no banco, não uma lista de ids: o inner join deixa
+  // só quem tem compra, e `purchases is null` só quem não tem.
+  const colunas =
+    filtros.converteu === "sim"
+      ? COLUNAS_LISTA.replace("purchases(", "purchases!inner(")
+      : COLUNAS_LISTA
+
+  let q = supabase.from("visitors").select(colunas, { count: "exact" })
+  for (const c of condicoesDe(filtros)) {
     if (c.op === "or") q = q.or(c.filtro)
     else if (c.op === "is-null") q = q.is(c.coluna, null)
     else if (c.op === "not-null") q = q.not(c.coluna, "is", null)
-    else if (c.op === "in") q = q.in(c.coluna, c.valores)
-    else if (c.op === "not-in") q = q.not(c.coluna, "in", `(${c.valores.join(",")})`)
     else if (c.op === "lt") q = q.lt(c.coluna, c.valor)
     else q = q[c.op](c.coluna, c.valor)
   }
+  if (filtros.converteu === "nao") q = q.is("purchases", null)
 
   const { data, count, error } = await q
     .order("created_at", { ascending: false })
@@ -220,56 +193,65 @@ export type VisitorCounts = {
 
 /**
  * Conta os 5 agrupamentos principais da tela de visitantes.
- * Ignora os filtros `identificado` e `converteu` para retornar a fotografia completa
- * do período e termo de busca atuais. Limitado a 20.000 para segurança de performance.
+ *
+ * Ignora os filtros `identificado` e `converteu` para retornar a fotografia
+ * completa do período e termo de busca atuais.
+ *
+ * Todo número aqui é uma CONTAGEM EXATA no banco (`head: true`, nenhuma linha
+ * trafega) — a mesma fonte do "1-50 de N" da tabela, então os dois nunca
+ * divergem. Ler as linhas e contar em JS esbarrava no teto de 1.000 do
+ * PostgREST e os chips travavam nesse número. Os outros dois saem por
+ * subtração: anônimos = visitantes − identificados; leads (identificado que
+ * ainda não comprou) = identificados − clientes identificados.
  */
 export async function getVisitorCounts(filtros: LeadFilters): Promise<VisitorCounts> {
   const supabase = await createClient()
 
-  const filtrosGlobais: LeadFilters = { ...filtros, identificado: "todos", converteu: "todos" }
-  const conds = condicoesDe(filtrosGlobais)
+  const conds = condicoesDe({ ...filtros, identificado: "todos", converteu: "todos" })
 
-  let q = supabase.from("visitors").select("trck_user_id, identified_at")
-  for (const c of conds) {
-    if (c.op === "or") q = q.or(c.filtro)
-    else if (c.op === "is-null") q = q.is(c.coluna, null)
-    else if (c.op === "not-null") q = q.not(c.coluna, "is", null)
-    else if (c.op === "in") q = q.in(c.coluna, c.valores)
-    else if (c.op === "not-in") q = q.not(c.coluna, "in", `(${c.valores.join(",")})`)
-    else if (c.op === "lt") q = q.lt(c.coluna, c.valor)
-    else q = q[c.op](c.coluna, c.valor)
+  async function contar(comCompra: boolean, soIdentificados: boolean): Promise<number | null> {
+    let q = supabase
+      .from("visitors")
+      .select(comCompra ? "trck_user_id,purchases!inner(id)" : "trck_user_id", {
+        count: "exact",
+        head: true,
+      })
+    for (const c of conds) {
+      if (c.op === "or") q = q.or(c.filtro)
+      else if (c.op === "is-null") q = q.is(c.coluna, null)
+      else if (c.op === "not-null") q = q.not(c.coluna, "is", null)
+      else if (c.op === "lt") q = q.lt(c.coluna, c.valor)
+      else q = q[c.op](c.coluna, c.valor)
+    }
+    if (soIdentificados) q = q.not("identified_at", "is", null)
+    const { count, error } = await q
+    return error ? null : (count ?? 0)
   }
 
-  const [resVisitors, arrIdsCompra] = await Promise.all([
-    q.limit(20_000),
-    idsComCompra(supabase)
+  const [visitantes, identificados, clientes, clientesIdentificados] = await Promise.all([
+    contar(false, false),
+    contar(false, true),
+    contar(true, false),
+    contar(true, true),
   ])
 
-  const zeros = { visitantes: 0, anonimos: 0, identificados: 0, clientes: 0, leads: 0 }
-  if (resVisitors.error || !resVisitors.data) return zeros
-
-  const data = resVisitors.data as { trck_user_id: string; identified_at: string | null }[]
-  const setClientes = new Set(arrIdsCompra)
-
-  let visitantes = 0
-  let anonimos = 0
-  let identificados = 0
-  let clientes = 0
-  let leads = 0
-
-  for (const v of data) {
-    visitantes++
-    const isIdent = Boolean(v.identified_at)
-    const isCliente = setClientes.has(v.trck_user_id)
-
-    if (!isIdent) anonimos++
-    else identificados++
-
-    if (isCliente) clientes++
-    if (isIdent && !isCliente) leads++
+  // Qualquer falha: zera tudo em vez de mostrar um total parcial.
+  if (
+    visitantes === null ||
+    identificados === null ||
+    clientes === null ||
+    clientesIdentificados === null
+  ) {
+    return { visitantes: 0, anonimos: 0, identificados: 0, clientes: 0, leads: 0 }
   }
 
-  return { visitantes, anonimos, identificados, clientes, leads }
+  return {
+    visitantes,
+    anonimos: visitantes - identificados,
+    identificados,
+    clientes,
+    leads: identificados - clientesIdentificados,
+  }
 }
 
 export type LeadPurchaseRow = {

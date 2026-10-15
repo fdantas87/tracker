@@ -3,6 +3,7 @@ import "server-only"
 import { createClient } from "@/lib/supabase/server"
 import { nomeDoPais, periodoIntervalo, type GeoFilters } from "@/lib/dashboard/geo-filters"
 import type { GeoPonto } from "@/lib/dashboard/geo-fit"
+import { lerTudo } from "@/lib/dashboard/ler-tudo"
 
 /**
  * Leitura da tela de Geo.
@@ -23,14 +24,6 @@ import type { GeoPonto } from "@/lib/dashboard/geo-fit"
  * estourar o TypeScript em profundidade de instanciação (que é o que acontece
  * quando o query builder passa por uma função genérica).
  */
-
-/**
- * Teto do scan de agregação, igual ao de `events.ts` e `vendas.ts`. A
- * alternativa seria uma função de agregação no Postgres, que exigiria migration
- * nova aplicada à mão no SQL Editor; quando o volume passar disso, o certo é
- * virar RPC. Até lá, a tela diz que o número está parcial em vez de mentir.
- */
-const TETO_AGREGACAO = 20_000
 
 /**
  * Casas decimais usadas para juntar visitantes no mesmo ponto do mapa. Duas
@@ -114,7 +107,13 @@ type RawVisitante = {
   geo_city: string | null
   geo_latitude: number | null
   geo_longitude: number | null
+  /** Embutido só para saber se o visitante já comprou (qualquer status). */
+  purchases: { id: string }[] | null
 }
+
+/** Anotada como `string`: ver `COLUNAS_LISTA` em `vendas.ts`. */
+const COLUNAS_VISITANTES: string =
+  "trck_user_id,identified_at,geo_country,geo_region,geo_city,geo_latitude,geo_longitude,purchases(id)"
 
 const VAZIO_VISITANTES: Omit<VisitantesPorLocal, "error"> = {
   pontos: [],
@@ -154,34 +153,22 @@ export async function getVisitantesPorLocal(
 ): Promise<VisitantesPorLocal> {
   const supabase = await createClient()
 
-  let q = supabase
-    .from("visitors")
-    .select("trck_user_id,identified_at,geo_country,geo_region,geo_city,geo_latitude,geo_longitude")
-
   const { inicio, fim } = periodoIntervalo(filtros.periodo)
-  if (inicio) q = q.gte("created_at", inicio.toISOString())
-  if (fim) q = q.lt("created_at", fim.toISOString())
-  if (filtros.q) {
-    const termo = filtros.q.replace(/[(),*]/g, "")
+  const termo = filtros.q ? filtros.q.replace(/[(),*]/g, "") : ""
+
+  // Lido em páginas: o PostgREST corta em 1.000 linhas por requisição, e os
+  // chips precisam bater com a tabela de Visitantes (que usa `count: exact`).
+  const { linhas, truncado, error } = await lerTudo<RawVisitante>((de, ate) => {
+    let q = supabase.from("visitors").select(COLUNAS_VISITANTES)
+    if (inicio) q = q.gte("created_at", inicio.toISOString())
+    if (fim) q = q.lt("created_at", fim.toISOString())
     if (termo) {
       q = q.or(`geo_country.ilike.*${termo}*,geo_region.ilike.*${termo}*,geo_city.ilike.*${termo}*`)
     }
-  }
+    return q.order("trck_user_id").range(de, ate)
+  })
 
-  const { data, error } = await q.limit(TETO_AGREGACAO)
-
-  // Fetch all buyers to identify "Clientes"
-  const { data: comprasData } = await supabase
-    .from("purchases")
-    .select("trck_user_id")
-    .not("trck_user_id", "is", null)
-    .limit(20_000)
-
-  const idsComCompra = new Set((comprasData ?? []).map((r: any) => r.trck_user_id))
-
-  if (error) return { ...VAZIO_VISITANTES, error: error.message }
-
-  const linhas = (data ?? []) as unknown as RawVisitante[]
+  if (error) return { ...VAZIO_VISITANTES, error }
 
   const paises = new Map<string, number>()
   const estados = new Map<string, number>()
@@ -203,7 +190,7 @@ export async function getVisitantesPorLocal(
 
   for (const linha of linhas) {
     const isIdent = Boolean(linha.identified_at)
-    const isCliente = idsComCompra.has(linha.trck_user_id)
+    const isCliente = (linha.purchases?.length ?? 0) > 0
     const isLead = isIdent && !isCliente
 
     if (isCliente) totalClientes++
@@ -277,7 +264,7 @@ export async function getVisitantesPorLocal(
       cidades: rankingDe(clientesCidades, (cidade) => cidade),
       total: totalClientes,
     },
-    truncado: linhas.length >= TETO_AGREGACAO,
+    truncado,
     error: null,
   }
 }
@@ -342,26 +329,23 @@ const VAZIO_RECEITA: Omit<ReceitaPorLocal, "error"> = {
 export async function getReceitaPorLocal(filtros: GeoFilters): Promise<ReceitaPorLocal> {
   const supabase = await createClient()
 
-  let q = supabase
-    .from("purchases")
-    .select("amount,currency,geo_country,geo_region,geo_city")
-    .eq("status", "approved")
-
   const { inicio, fim } = periodoIntervalo(filtros.periodo)
-  if (inicio) q = q.gte("created_at", inicio.toISOString())
-  if (fim) q = q.lt("created_at", fim.toISOString())
-  if (filtros.q) {
-    const termo = filtros.q.replace(/[(),*]/g, "")
+  const termo = filtros.q ? filtros.q.replace(/[(),*]/g, "") : ""
+
+  const { linhas, truncado, error } = await lerTudo<RawCompra>((de, ate) => {
+    let q = supabase
+      .from("purchases")
+      .select("amount,currency,geo_country,geo_region,geo_city")
+      .eq("status", "approved")
+    if (inicio) q = q.gte("created_at", inicio.toISOString())
+    if (fim) q = q.lt("created_at", fim.toISOString())
     if (termo) {
       q = q.or(`geo_country.ilike.*${termo}*,geo_region.ilike.*${termo}*,geo_city.ilike.*${termo}*`)
     }
-  }
+    return q.order("id").range(de, ate)
+  })
 
-  const { data, error } = await q.limit(TETO_AGREGACAO)
-
-  if (error) return { ...VAZIO_RECEITA, error: error.message }
-
-  const linhas = (data ?? []) as unknown as RawCompra[]
+  if (error) return { ...VAZIO_RECEITA, error }
 
   const porMoeda = new Map<string, number>()
   for (const linha of linhas) {
@@ -413,7 +397,7 @@ export async function getReceitaPorLocal(filtros: GeoFilters): Promise<ReceitaPo
     faturamento,
     aprovadas,
     semLocal: { valor: semLocalValor, quantidade: semLocalQuantidade },
-    truncado: linhas.length >= TETO_AGREGACAO,
+    truncado,
     error: null,
   }
 }
