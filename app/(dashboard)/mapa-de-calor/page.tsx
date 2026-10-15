@@ -20,7 +20,7 @@ import {
   getClarityPanorama,
   type ClarityAccountRow,
 } from "@/lib/clarity/queries"
-import { PERIODOS, PERIODO_PADRAO, type PeriodoKey } from "@/lib/dashboard/filters"
+import { PERIODO_PADRAO, lerPeriodo as lerPeriodoDaUrl, type PeriodoKey } from "@/lib/dashboard/filters"
 
 export const metadata = {
   title: pageTitle("Mapa de Calor"),
@@ -36,7 +36,7 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>
 
 function lerPeriodo(sp: Record<string, string | string[] | undefined>): PeriodoKey {
   const v = Array.isArray(sp.periodo) ? sp.periodo[0] : sp.periodo
-  return v && v in PERIODOS ? (v as PeriodoKey) : PERIODO_PADRAO
+  return lerPeriodoDaUrl(v, PERIODO_PADRAO)
 }
 
 /**
@@ -176,7 +176,9 @@ async function Conteudo({ account, periodo }: { account: ClarityAccountRow; peri
             info:
               dados.dias > 1
                 ? "Visitantes distintos de cada dia, somados: quem volta em outro dia conta de novo."
-                : "Visitantes distintos nas últimas 24 h.",
+                : periodo === "hoje"
+                  ? "Visitantes distintos nas últimas 24 h."
+                  : "Visitantes distintos no dia.",
           },
           {
             metrica: "paginasPorSessao",

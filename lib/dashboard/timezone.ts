@@ -115,3 +115,15 @@ export function inicioDoDiaLocal(deslocamentoDias = 0, agora = new Date()): Date
   const primeiraPassada = new Date(alvo - offsetMs(agora))
   return new Date(alvo - offsetMs(primeiraPassada))
 }
+
+/**
+ * A meia-noite, no fuso do painel, de uma data de calendário ("2026-10-01") —
+ * mais `somarDias` dias. Mesmas duas passadas de `inicioDoDiaLocal`.
+ */
+export function inicioDoDiaEm(diaIso: string, somarDias = 0): Date {
+  const [ano, mes, dia] = diaIso.split("-").map(Number)
+  const alvo = Date.UTC(ano, mes - 1, dia + somarDias, 0, 0, 0)
+
+  const primeiraPassada = new Date(alvo - offsetMs(new Date(alvo)))
+  return new Date(alvo - offsetMs(primeiraPassada))
+}

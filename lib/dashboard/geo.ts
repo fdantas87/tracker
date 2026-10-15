@@ -1,7 +1,7 @@
 import "server-only"
 
 import { createClient } from "@/lib/supabase/server"
-import { nomeDoPais, periodoInicio, type GeoFilters } from "@/lib/dashboard/geo-filters"
+import { nomeDoPais, periodoIntervalo, type GeoFilters } from "@/lib/dashboard/geo-filters"
 import type { GeoPonto } from "@/lib/dashboard/geo-fit"
 
 /**
@@ -158,8 +158,9 @@ export async function getVisitantesPorLocal(
     .from("visitors")
     .select("trck_user_id,identified_at,geo_country,geo_region,geo_city,geo_latitude,geo_longitude")
 
-  const inicio = periodoInicio(filtros.periodo)
+  const { inicio, fim } = periodoIntervalo(filtros.periodo)
   if (inicio) q = q.gte("created_at", inicio.toISOString())
+  if (fim) q = q.lt("created_at", fim.toISOString())
   if (filtros.q) {
     const termo = filtros.q.replace(/[(),*]/g, "")
     if (termo) {
@@ -346,8 +347,9 @@ export async function getReceitaPorLocal(filtros: GeoFilters): Promise<ReceitaPo
     .select("amount,currency,geo_country,geo_region,geo_city")
     .eq("status", "approved")
 
-  const inicio = periodoInicio(filtros.periodo)
+  const { inicio, fim } = periodoIntervalo(filtros.periodo)
   if (inicio) q = q.gte("created_at", inicio.toISOString())
+  if (fim) q = q.lt("created_at", fim.toISOString())
   if (filtros.q) {
     const termo = filtros.q.replace(/[(),*]/g, "")
     if (termo) {

@@ -23,11 +23,10 @@ import {
 import {
   DISPATCH_STATUSES,
   PAGE_SIZE,
-  PERIODOS,
+  lerPeriodo,
   PERIODO_PADRAO,
   type DispatchStatus,
   type EventFilters,
-  type PeriodoKey,
 } from "@/lib/dashboard/filters"
 
 export const metadata = {
@@ -52,7 +51,7 @@ function lerFiltros(sp: Record<string, string | string[] | undefined>): EventFil
       status && (DISPATCH_STATUSES as readonly string[]).includes(status)
         ? (status as DispatchStatus)
         : undefined,
-    periodo: periodo && periodo in PERIODOS ? (periodo as PeriodoKey) : PERIODO_PADRAO,
+    periodo: lerPeriodo(periodo, PERIODO_PADRAO),
     q: texto(sp.q),
     pagina: Number.isFinite(pagina) && pagina > 0 ? pagina : 1,
   }

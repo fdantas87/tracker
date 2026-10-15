@@ -1570,6 +1570,21 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-10-15:** Topbar ganhou "Ontem" e intervalo personalizado com
+  calendário. O período virou um módulo só, `lib/dashboard/periodo.ts` (as 4
+  cópias de `PERIODOS` em filters/vendas/leads/geo agora reexportam dele; cada
+  tela mantém o seu `PERIODO_PADRAO`). Na URL continua um parâmetro só:
+  `?periodo=ontem` ou `?periodo=2026-10-01..2026-10-10` (datas inclusivas, fuso
+  do painel). `periodoIntervalo()` devolve início **e fim exclusivo** — antes só
+  existia início, e toda consulta (Eventos, Vendas, Leads, Geo, Visão geral)
+  ganhou o `lt` do fim. Clarity: "Ontem"/personalizado somam só as janelas do
+  cron cujo dia (`diaDaJanela`) cai no intervalo. Calendário próprio
+  (`components/dashboard/period-range-picker.tsx`), sem `react-day-picker`:
+  mês/ano em dropdown, teclado (setas, PageUp/PageDown), dias futuros
+  bloqueados. Verificado: build verde, tsc limpo, 15/15 no teste de mesa da
+  lógica de datas em UTC e em Asia/Tokyo. **Não verificado:** o calendário no
+  navegador.
+
 - **2026-10-05:** Webhook de contrato fixo (`custom`) e adaptador nativo da
   Bask. Arquivos novos: `lib/webhooks/adapters/{custom,bask}.ts` e a migration
   `20261005205000_platform_custom_bask.sql`; alterados a rota do webhook (token

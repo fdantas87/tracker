@@ -1,8 +1,9 @@
 import "server-only"
 
 import { createClient } from "@/lib/supabase/server"
-import { periodoInicio, type PeriodoKey } from "@/lib/dashboard/filters"
+import { periodoIntervalo, type PeriodoKey } from "@/lib/dashboard/filters"
 import { getVendasResumo } from "@/lib/dashboard/vendas"
+import { lerTudo } from "@/lib/dashboard/ler-tudo"
 
 /**
  * Números da Visão geral.
@@ -41,35 +42,6 @@ import { getVendasResumo } from "@/lib/dashboard/vendas"
  * ROAS, CPA, CPL, CAC e Connect Rate NÃO estão aqui: dependem de gasto e cliques
  * de anúncio (fase 9, Campanhas), que o sistema ainda não lê.
  */
-
-/** Mesmo teto de agregação de `events.ts` e `vendas.ts`. */
-const TETO_AGREGACAO = 20_000
-
-/**
- * O PostgREST do Supabase devolve no máximo 1.000 linhas por requisição, então
- * `.limit(20_000)` sozinho NÃO traz 20 mil: traz mil, em silêncio. Aqui a leitura
- * é paginada com `.range()` até acabar ou bater o teto.
- */
-const TAMANHO_PAGINA = 1_000
-
-type Pagina = { data: unknown; error: { message: string } | null }
-
-async function lerTudo<T>(
-  buscar: (de: number, ate: number) => PromiseLike<Pagina>
-): Promise<{ linhas: T[]; truncado: boolean; error: string | null }> {
-  const linhas: T[] = []
-
-  for (let de = 0; de < TETO_AGREGACAO; de += TAMANHO_PAGINA) {
-    const { data, error } = await buscar(de, de + TAMANHO_PAGINA - 1)
-    if (error) return { linhas: [], truncado: false, error: error.message }
-
-    const pagina = (data ?? []) as T[]
-    linhas.push(...pagina)
-    if (pagina.length < TAMANHO_PAGINA) return { linhas, truncado: false, error: null }
-  }
-
-  return { linhas, truncado: true, error: null }
-}
 
 export type Overview = {
   moeda: string
@@ -126,7 +98,9 @@ const ZERADO: Omit<Overview, "error"> = {
  */
 export async function getOverview(periodo: PeriodoKey): Promise<Overview> {
   const supabase = await createClient()
-  const inicio = periodoInicio(periodo)?.toISOString() ?? null
+  const intervalo = periodoIntervalo(periodo)
+  const inicio = intervalo.inicio?.toISOString() ?? null
+  const fim = intervalo.fim?.toISOString() ?? null
 
   const [resumo, eventos, visitantes, emails, compras] = await Promise.all([
     getVendasResumo({ periodo, pagina: 1 }),
@@ -134,12 +108,14 @@ export async function getOverview(periodo: PeriodoKey): Promise<Overview> {
     lerTudo<EventoRow>((de, ate) => {
       let q = supabase.from("events_log").select(COLUNAS_EVENTO)
       if (inicio) q = q.gte("event_time", inicio)
+      if (fim) q = q.lt("event_time", fim)
       return q.order("id").range(de, ate)
     }),
 
     lerTudo<VisitanteRow>((de, ate) => {
       let q = supabase.from("visitors").select(COLUNAS_VISITANTE)
       if (inicio) q = q.gte("created_at", inicio)
+      if (fim) q = q.lt("created_at", fim)
       return q.order("trck_user_id").range(de, ate)
     }),
 
@@ -157,6 +133,7 @@ export async function getOverview(periodo: PeriodoKey): Promise<Overview> {
     lerTudo<CompraRow>((de, ate) => {
       let q = supabase.from("purchases").select(COLUNAS_COMPRA).eq("status", "approved")
       if (inicio) q = q.gte("created_at", inicio)
+      if (fim) q = q.lt("created_at", fim)
       return q.order("id").range(de, ate)
     }),
   ])

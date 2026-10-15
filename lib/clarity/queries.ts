@@ -1,6 +1,7 @@
 import "server-only"
 
-import { diaLocal } from "@/lib/dashboard/timezone"
+import { diasDoPeriodo as diasDoCalendario, lerPeriodo } from "@/lib/dashboard/periodo"
+import { diaLocal, inicioDoDiaEm } from "@/lib/dashboard/timezone"
 import { createServiceClient } from "@/lib/supabase/service"
 import {
   CLARITY_DAILY_LIMIT,
@@ -167,10 +168,21 @@ function topPorSinal(linhas: LinhaClarity[]): Record<SinalAtrito, PaginaTopSinal
 }
 
 /** "hoje" = a última janela; os outros contam dias. "tudo" vira 30. */
-export function diasDoPeriodo(periodo: string): number {
+function diasDoPeriodo(periodo: string): number {
   if (periodo === "hoje") return 1
   if (periodo === "7d") return 7
   return 30
+}
+
+/**
+ * "Ontem" e o intervalo personalizado são dias de calendário FECHADOS: só valem
+ * as janelas do cron que descrevem exatamente esses dias (`diaDaJanela`). Os
+ * outros períodos continuam "as N mais recentes". `null` = período relativo.
+ */
+function diasAlvoDe(periodo: string): string[] | null {
+  const p = lerPeriodo(periodo, "30d")
+  if (p !== "ontem" && !p.includes("..")) return null
+  return diasDoCalendario(p)
 }
 
 /**
@@ -191,8 +203,22 @@ function diaDaJanela(capturedAt: string): string {
  *   nenhuma do cron (deploy recém-conectado), cai para a mais recente, e a
  *   tela mostra "1 de N dias".
  */
-function escolherJanelas(rows: SnapshotRow[], dias: number): SnapshotRow[] {
+function escolherJanelas(
+  rows: SnapshotRow[],
+  dias: number,
+  diasAlvo: Set<string> | null
+): SnapshotRow[] {
   if (rows.length === 0) return []
+
+  if (diasAlvo) {
+    const porDia = new Map<string, SnapshotRow>()
+    for (const row of rows) {
+      const dia = diaDaJanela(row.captured_at)
+      if (row.origin === "cron" && diasAlvo.has(dia) && !porDia.has(dia)) porDia.set(dia, row)
+    }
+    return [...porDia.values()]
+  }
+
   if (dias === 1) return [rows[0]]
 
   const porDia = new Map<string, SnapshotRow>()
@@ -246,18 +272,26 @@ function vazio(dias: number, error: string | null): ClarityPanorama {
 }
 
 export async function getClarityPanorama(periodo: string): Promise<ClarityPanorama> {
-  const dias = diasDoPeriodo(periodo)
+  const listaAlvo = diasAlvoDe(periodo)
+  const diasAlvo = listaAlvo ? new Set(listaAlvo) : null
+  const dias = listaAlvo ? listaAlvo.length : diasDoPeriodo(periodo)
 
   // Folga de 1 dia: o cron pode ter rodado minutos depois do horário de ontem.
-  const desde = new Date(Date.now() - (dias + 1) * 86_400_000).toISOString()
+  // No intervalo fechado, a janela do último dia é capturada na manhã seguinte.
+  const desde = listaAlvo
+    ? inicioDoDiaEm(listaAlvo[0]).toISOString()
+    : new Date(Date.now() - (dias + 1) * 86_400_000).toISOString()
 
   const supabase = createServiceClient()
-  const { data, error } = await supabase
+  let q = supabase
     .from("clarity_snapshots")
     .select("dimension_key, captured_at, origin, payload")
     .gte("captured_at", desde)
+  if (listaAlvo) q = q.lt("captured_at", inicioDoDiaEm(listaAlvo[dias - 1], 2).toISOString())
+
+  const { data, error } = await q
     .order("captured_at", { ascending: false })
-    .limit(500)
+    .limit(Math.max(500, dias * 15))
 
   if (error) return vazio(dias, `Falha ao ler os dados do Clarity: ${error.message}`)
 
@@ -265,7 +299,7 @@ export async function getClarityPanorama(periodo: string): Promise<ClarityPanora
   if (rows.length === 0) return vazio(dias, null)
 
   const porVisao = (key: ClarityViewKey) =>
-    escolherJanelas(rows.filter((r) => r.dimension_key === key), dias)
+    escolherJanelas(rows.filter((r) => r.dimension_key === key), dias, diasAlvo)
 
   const geralRows = porVisao("none")
   const geral = agregarVisao(geralRows, "none")

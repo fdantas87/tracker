@@ -4,7 +4,17 @@ import { useTransition } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 
 import { cn } from "@/lib/utils"
-import { PERIODOS, PERIODO_PADRAO, type PeriodoKey } from "@/lib/dashboard/filters"
+import { PERIODO_PADRAO } from "@/lib/dashboard/filters"
+import {
+  PERIODOS,
+  datasDoPeriodo,
+  lerPeriodo,
+  periodoPersonalizado,
+  rotuloDoPeriodo,
+  type PeriodoFixo,
+  type PeriodoKey,
+} from "@/lib/dashboard/periodo"
+import { PeriodRangePicker } from "@/components/dashboard/period-range-picker"
 import {
   Select,
   SelectContent,
@@ -15,6 +25,8 @@ import {
 
 const SHOW_ON_ROUTES = ["/", "/eventos", "/leads", "/vendas", "/geo", "/mapa-de-calor"]
 
+const FIXOS = Object.keys(PERIODOS) as PeriodoFixo[]
+
 export function TopbarPeriodSelector() {
   const router = useRouter()
   const pathname = usePathname()
@@ -23,14 +35,14 @@ export function TopbarPeriodSelector() {
 
   if (!SHOW_ON_ROUTES.includes(pathname)) return null
 
-  const p = searchParams.get("periodo")
-  const periodo = p && p in PERIODOS ? (p as PeriodoKey) : PERIODO_PADRAO
+  const periodo = lerPeriodo(searchParams.get("periodo"), PERIODO_PADRAO)
+  const datas = datasDoPeriodo(periodo)
 
   function setPeriodo(chave: PeriodoKey) {
     if (chave === periodo) return
 
     const params = new URLSearchParams(searchParams.toString())
-    
+
     // Deletar o default mantém as URLs limpas sem "?periodo=7d"
     if (chave === PERIODO_PADRAO) {
       params.delete("periodo")
@@ -46,33 +58,36 @@ export function TopbarPeriodSelector() {
     })
   }
 
-  const chaves = Object.keys(PERIODOS) as PeriodoKey[]
-
   return (
     <>
-      {/* Abaixo de sm, 4 pílulas + tema + conta não cabem em 360px ao lado do
-          título: vira um select compacto. */}
+      {/* Abaixo de sm, as pílulas + tema + conta não cabem em 360px ao lado do
+          título: vira um select compacto, e o calendário fica ao lado. */}
       <Select value={periodo} onValueChange={(v) => setPeriodo(v as PeriodoKey)}>
         <SelectTrigger size="sm" aria-label="Período" className="text-xs sm:hidden">
           <SelectValue />
         </SelectTrigger>
         <SelectContent align="end">
-          {chaves.map((chave) => (
+          {FIXOS.map((chave) => (
             <SelectItem key={chave} value={chave} className="text-xs">
               {PERIODOS[chave].label}
             </SelectItem>
           ))}
+          {datas ? (
+            <SelectItem value={periodo} className="text-xs tabular-nums">
+              {rotuloDoPeriodo(periodo)}
+            </SelectItem>
+          ) : null}
         </SelectContent>
       </Select>
-      <div className="hidden rounded-lg border p-0.5 sm:flex">
-        {chaves.map((chave) => (
+      <div className="flex items-center rounded-lg border p-0.5">
+        {FIXOS.map((chave) => (
           <button
             key={chave}
             type="button"
             onClick={() => setPeriodo(chave)}
             aria-pressed={periodo === chave}
             className={cn(
-              "shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition-colors",
+              "hidden shrink-0 rounded-md px-3 py-1.5 text-xs font-medium transition-colors sm:block",
               periodo === chave
                 ? "bg-primary/15 text-primary"
                 : "text-muted-foreground hover:text-foreground"
@@ -81,6 +96,12 @@ export function TopbarPeriodSelector() {
             {PERIODOS[chave].label}
           </button>
         ))}
+        <span aria-hidden className="mx-0.5 hidden h-4 w-px bg-border sm:block" />
+        <PeriodRangePicker
+          periodo={periodo}
+          datas={datas}
+          onAplicar={(de, ate) => setPeriodo(periodoPersonalizado(de, ate))}
+        />
       </div>
     </>
   )

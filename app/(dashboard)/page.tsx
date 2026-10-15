@@ -3,7 +3,7 @@ import { AlertCircle, Info } from "lucide-react"
 import { PageHeader } from "@/components/page-header"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { pageTitle } from "@/lib/branding"
-import { PERIODOS, PERIODO_PADRAO, type PeriodoKey } from "@/lib/dashboard/filters"
+import { PERIODO_PADRAO, lerPeriodo as lerPeriodoDaUrl, type PeriodoKey } from "@/lib/dashboard/filters"
 import { getOverview } from "@/lib/dashboard/overview"
 import { OverviewDashboard, type OverviewData } from "./overview-dashboard"
 
@@ -15,7 +15,7 @@ type SearchParams = Promise<Record<string, string | string[] | undefined>>
 
 function lerPeriodo(sp: Record<string, string | string[] | undefined>): PeriodoKey {
   const bruto = Array.isArray(sp.periodo) ? sp.periodo[0] : sp.periodo
-  return bruto && bruto in PERIODOS ? (bruto as PeriodoKey) : PERIODO_PADRAO
+  return lerPeriodoDaUrl(bruto, PERIODO_PADRAO)
 }
 
 /** Divisão que devolve 0, nunca NaN/Infinity, quando não há denominador. */

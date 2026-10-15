@@ -14,12 +14,11 @@ import {
   CONVERTEU_VALORES,
   IDENTIFICADO_VALORES,
   PAGE_SIZE,
-  PERIODOS,
+  lerPeriodo,
   PERIODO_PADRAO,
   type ConverteuFiltro,
   type IdentificadoFiltro,
   type LeadFilters,
-  type PeriodoKey,
 } from "@/lib/dashboard/leads-filters"
 
 export const metadata = {
@@ -49,7 +48,7 @@ function lerFiltros(sp: Record<string, string | string[] | undefined>): LeadFilt
       converteu && (CONVERTEU_VALORES as readonly string[]).includes(converteu)
         ? (converteu as ConverteuFiltro)
         : "todos",
-    periodo: periodo && periodo in PERIODOS ? (periodo as PeriodoKey) : PERIODO_PADRAO,
+    periodo: lerPeriodo(periodo, PERIODO_PADRAO),
     pagina: Number.isFinite(pagina) && pagina > 0 ? pagina : 1,
   }
 }

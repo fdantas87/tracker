@@ -3,7 +3,7 @@ import "server-only"
 import { createClient } from "@/lib/supabase/server"
 import {
   PAGE_SIZE,
-  periodoInicio,
+  periodoIntervalo,
   type LeadFilters,
 } from "@/lib/dashboard/leads-filters"
 import { parseUserAgent, type DeviceInfo } from "@/lib/dashboard/user-agent"
@@ -33,7 +33,7 @@ import type { PurchaseStatus } from "@/lib/webhooks/adapters/types"
 // argumentos de formatos diferentes).
 // ---------------------------------------------------------------------------
 type Condicao =
-  | { op: "gte"; coluna: string; valor: string }
+  | { op: "gte" | "lt"; coluna: string; valor: string }
   | { op: "eq"; coluna: string; valor: string }
   | { op: "or"; filtro: string }
   | { op: "is-null"; coluna: string }
@@ -44,8 +44,9 @@ type Condicao =
 function condicoesDe(filtros: LeadFilters, idsComCompra?: string[]): Condicao[] {
   const cond: Condicao[] = []
 
-  const inicio = periodoInicio(filtros.periodo)
+  const { inicio, fim } = periodoIntervalo(filtros.periodo)
   if (inicio) cond.push({ op: "gte", coluna: "created_at", valor: inicio.toISOString() })
+  if (fim) cond.push({ op: "lt", coluna: "created_at", valor: fim.toISOString() })
 
   if (filtros.identificado === "sim") cond.push({ op: "not-null", coluna: "identified_at" })
   if (filtros.identificado === "nao") cond.push({ op: "is-null", coluna: "identified_at" })
@@ -192,6 +193,7 @@ export async function listLeads(filtros: LeadFilters): Promise<{
     else if (c.op === "not-null") q = q.not(c.coluna, "is", null)
     else if (c.op === "in") q = q.in(c.coluna, c.valores)
     else if (c.op === "not-in") q = q.not(c.coluna, "in", `(${c.valores.join(",")})`)
+    else if (c.op === "lt") q = q.lt(c.coluna, c.valor)
     else q = q[c.op](c.coluna, c.valor)
   }
 
@@ -234,6 +236,7 @@ export async function getVisitorCounts(filtros: LeadFilters): Promise<VisitorCou
     else if (c.op === "not-null") q = q.not(c.coluna, "is", null)
     else if (c.op === "in") q = q.in(c.coluna, c.valores)
     else if (c.op === "not-in") q = q.not(c.coluna, "in", `(${c.valores.join(",")})`)
+    else if (c.op === "lt") q = q.lt(c.coluna, c.valor)
     else q = q[c.op](c.coluna, c.valor)
   }
 

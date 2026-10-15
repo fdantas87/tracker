@@ -1,16 +1,16 @@
 import "server-only"
 
 import { createClient } from "@/lib/supabase/server"
+import { lerTudo } from "@/lib/dashboard/ler-tudo"
 import {
   PAGE_SIZE,
-  PERIODOS,
-  PERIODO_PADRAO,
-  periodoInicio,
+  diasDoPeriodo,
+  periodoIntervalo,
   type DispatchStatus,
   type EventFilters,
   type SeriePonto,
 } from "@/lib/dashboard/filters"
-import { diaLocal, inicioDoDiaLocal } from "@/lib/dashboard/timezone"
+import { diaLocal } from "@/lib/dashboard/timezone"
 
 /**
  * Leitura da tela de Eventos.
@@ -62,7 +62,7 @@ export type EventRow = {
  * quieto, sem `any` e sem repetir a regra de filtro em três lugares.
  */
 type Condicao =
-  | { op: "gte" | "eq"; coluna: string; valor: string }
+  | { op: "gte" | "lt" | "eq"; coluna: string; valor: string }
   | { op: "or"; filtro: string }
 
 function condicoesDe(
@@ -71,8 +71,9 @@ function condicoesDe(
 ): Condicao[] {
   const cond: Condicao[] = []
 
-  const inicio = periodoInicio(filtros.periodo)
+  const { inicio, fim } = periodoIntervalo(filtros.periodo)
   if (inicio) cond.push({ op: "gte", coluna: "event_time", valor: inicio.toISOString() })
+  if (fim) cond.push({ op: "lt", coluna: "event_time", valor: fim.toISOString() })
 
   if (filtros.evento) cond.push({ op: "eq", coluna: "event_name", valor: filtros.evento })
   if (filtros.status && !ignorarStatus) {
@@ -166,7 +167,11 @@ export async function listEvents(filtros: EventFilters): Promise<{
 
   let q = supabase.from("events_log").select(COLUNAS, { count: "exact" })
   for (const c of condicoesDe(filtros)) {
-    q = c.op === "or" ? q.or(c.filtro) : q[c.op](c.coluna, c.valor)
+    q = c.op === "or"
+      ? q.or(c.filtro)
+      : c.op === "lt"
+        ? q.lt(c.coluna, c.valor)
+        : q[c.op](c.coluna, c.valor)
   }
 
   const { data, count, error } = await q
@@ -216,7 +221,11 @@ export async function getStatusCounts(
         .select("id", { count: "exact", head: true })
         .eq("dispatch_status", s)
       for (const c of condicoesDe(filtros, { ignorarStatus: true })) {
-        q = c.op === "or" ? q.or(c.filtro) : q[c.op](c.coluna, c.valor)
+        q = c.op === "or"
+          ? q.or(c.filtro)
+          : c.op === "lt"
+            ? q.lt(c.coluna, c.valor)
+            : q[c.op](c.coluna, c.valor)
       }
       const { count, error } = await q
       return error ? null : (count ?? 0)
@@ -239,20 +248,28 @@ export async function getStatusCounts(
  *
  * A agregação é feita aqui e não em SQL porque uma função de agregação exigiria
  * uma migration nova (que neste projeto é aplicada à mão no SQL Editor), e não
- * vale travar a tela nisso. Só duas colunas são trazidas, e o teto de 20k linhas
- * cobre com folga o volume atual. Se um dia passar disso, o certo é uma RPC.
+ * vale travar a tela nisso. Só duas colunas são trazidas, lidas em páginas
+ * (`lerTudo`): `.limit(N)` sozinho trazia só as 1.000 primeiras. Se o volume
+ * passar do teto de `ler-tudo.ts`, o certo é uma RPC.
  */
 export async function getSerieDiaria(filtros: EventFilters): Promise<SeriePonto[]> {
   const supabase = await createClient()
 
-  let q = supabase.from("events_log").select("event_time,dispatch_status")
-  for (const c of condicoesDe(filtros)) {
-    q = c.op === "or" ? q.or(c.filtro) : q[c.op](c.coluna, c.valor)
-  }
+  const { linhas, error } = await lerTudo<{ event_time: string; dispatch_status: DispatchStatus }>(
+    (de, ate) => {
+      let q = supabase.from("events_log").select("event_time,dispatch_status")
+      for (const c of condicoesDe(filtros)) {
+        q = c.op === "or"
+          ? q.or(c.filtro)
+          : c.op === "lt"
+            ? q.lt(c.coluna, c.valor)
+            : q[c.op](c.coluna, c.valor)
+      }
+      return q.order("id").range(de, ate)
+    }
+  )
 
-  const { data, error } = await q.limit(20_000)
-
-  if (error || !data) return []
+  if (error) return []
 
   const porDia = new Map<string, SeriePonto>()
 
@@ -263,15 +280,11 @@ export async function getSerieDiaria(filtros: EventFilters): Promise<SeriePonto[
   // `toISOString().slice(0,10)` — como era antes — um evento das 22h em
   // Brasília caía no balde do dia seguinte, enquanto a mesma linha na tabela
   // aparecia com a data de hoje.
-  const cfg = PERIODOS[filtros.periodo] ?? PERIODOS[PERIODO_PADRAO]
-  if (cfg.dias !== null) {
-    for (let i = cfg.dias - 1; i >= 0; i--) {
-      const chave = diaLocal(inicioDoDiaLocal(i))
-      porDia.set(chave, { dia: chave, enviados: 0, outros: 0 })
-    }
+  for (const chave of diasDoPeriodo(filtros.periodo) ?? []) {
+    porDia.set(chave, { dia: chave, enviados: 0, outros: 0 })
   }
 
-  for (const row of data as { event_time: string; dispatch_status: DispatchStatus }[]) {
+  for (const row of linhas) {
     const chave = diaLocal(row.event_time)
     const ponto = porDia.get(chave) ?? { dia: chave, enviados: 0, outros: 0 }
     if (row.dispatch_status === "sent") ponto.enviados += 1

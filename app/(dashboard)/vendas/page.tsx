@@ -21,11 +21,10 @@ import { getVendasResumo, listVendas, type VendasResumo } from "@/lib/dashboard/
 import {
   PAGAMENTO_VALORES,
   PAGE_SIZE,
-  PERIODOS,
+  lerPeriodo,
   PERIODO_PADRAO,
   STATUS_VALORES,
   type PagamentoFiltro,
-  type PeriodoKey,
   type VendaFilters,
 } from "@/lib/dashboard/vendas-filters"
 import type { PurchaseStatus } from "@/lib/webhooks/adapters/types"
@@ -58,7 +57,7 @@ function lerFiltros(sp: Record<string, string | string[] | undefined>): VendaFil
       pagamento && (PAGAMENTO_VALORES as readonly string[]).includes(pagamento)
         ? (pagamento as PagamentoFiltro)
         : undefined,
-    periodo: periodo && periodo in PERIODOS ? (periodo as PeriodoKey) : PERIODO_PADRAO,
+    periodo: lerPeriodo(periodo, PERIODO_PADRAO),
     pagina: Number.isFinite(pagina) && pagina > 0 ? pagina : 1,
   }
 }

@@ -5,10 +5,11 @@ import {
   PAGE_SIZE,
   PAGAMENTO_LABELS,
   PAGAMENTO_NAO_INFORMADO,
-  periodoInicio,
+  periodoIntervalo,
   type VendaFilters,
 } from "@/lib/dashboard/vendas-filters"
 import { parseUserAgent, type DeviceInfo } from "@/lib/dashboard/user-agent"
+import { lerTudo } from "@/lib/dashboard/ler-tudo"
 import type { PaymentMethod, PurchaseStatus } from "@/lib/webhooks/adapters/types"
 
 /**
@@ -25,15 +26,6 @@ import type { PaymentMethod, PurchaseStatus } from "@/lib/webhooks/adapters/type
  * ver o cabeçalho de `lib/dashboard/leads.ts`.
  */
 
-/**
- * Teto do scan de agregação, igual ao de `events.ts`. A alternativa seria uma
- * função de agregação no Postgres, que exigiria migration nova aplicada à mão
- * no SQL Editor; quando o volume passar disso, o certo é virar RPC. Até lá, o
- * resumo devolve `truncado` para a tela poder dizer que o número está parcial
- * em vez de mentir com um total errado.
- */
-const TETO_AGREGACAO = 20_000
-
 // ---------------------------------------------------------------------------
 // Condições de filtro como dados.
 //
@@ -43,7 +35,7 @@ const TETO_AGREGACAO = 20_000
 // `.select()`, o que faz parecer que o culpado é a string de colunas.
 // ---------------------------------------------------------------------------
 type Condicao =
-  | { op: "gte"; coluna: string; valor: string }
+  | { op: "gte" | "lt"; coluna: string; valor: string }
   | { op: "eq"; coluna: string; valor: string }
   | { op: "or"; filtro: string }
   | { op: "is-null"; coluna: string }
@@ -55,8 +47,9 @@ function condicoesDe(
 ): Condicao[] {
   const cond: Condicao[] = []
 
-  const inicio = periodoInicio(filtros.periodo)
+  const { inicio, fim } = periodoIntervalo(filtros.periodo)
   if (inicio) cond.push({ op: "gte", coluna: "created_at", valor: inicio.toISOString() })
+  if (fim) cond.push({ op: "lt", coluna: "created_at", valor: fim.toISOString() })
 
   if (!ignorarStatus && filtros.status) {
     cond.push({ op: "eq", coluna: "status", valor: filtros.status })
@@ -169,7 +162,7 @@ const RESUMO_VAZIO: Omit<VendasResumo, "error" | "porPagamento"> = {
  * tela de Eventos. Se o status entrasse aqui, escolher "Reembolsadas" zeraria o
  * card de faturamento e os cards deixariam de servir como panorama.
  *
- * Agrega em JS a partir de um scan limitado, com quatro colunas só.
+ * Agrega em JS lendo o recorte inteiro em páginas (`lerTudo`), com quatro colunas só.
  *
  * EM CASO DE ERRO devolve o resumo ZERADO, com a mensagem no campo `error`. A
  * tela renderiza os cards em R$ 0,00 e mostra o aviso numa faixa ao lado, em vez
@@ -181,21 +174,23 @@ const RESUMO_VAZIO: Omit<VendasResumo, "error" | "porPagamento"> = {
 export async function getVendasResumo(filtros: VendaFilters): Promise<VendasResumo> {
   const supabase = await createClient()
 
-  let q = supabase.from("purchases").select("amount,currency,status,payment_method")
-  for (const c of condicoesDe(filtros, { ignorarStatus: true })) {
-    if (c.op === "or") q = q.or(c.filtro)
-    else if (c.op === "is-null") q = q.is(c.coluna, null)
-    else if (c.op === "not-null") q = q.not(c.coluna, "is", null)
-    else q = q[c.op](c.coluna, c.valor)
-  }
-
-  const { data, error } = await q.limit(TETO_AGREGACAO)
+  // Paginado: o PostgREST corta em 1.000 linhas por requisição, e somar só as
+  // primeiras mil faria o card divergir da tabela (que conta com `count: exact`).
+  const { linhas, truncado, error } = await lerTudo<RawResumoRow>((de, ate) => {
+    let q = supabase.from("purchases").select("amount,currency,status,payment_method")
+    for (const c of condicoesDe(filtros, { ignorarStatus: true })) {
+      if (c.op === "or") q = q.or(c.filtro)
+      else if (c.op === "is-null") q = q.is(c.coluna, null)
+      else if (c.op === "not-null") q = q.not(c.coluna, "is", null)
+      else if (c.op === "lt") q = q.lt(c.coluna, c.valor)
+      else q = q[c.op](c.coluna, c.valor)
+    }
+    return q.order("id").range(de, ate)
+  })
 
   if (error) {
-    return { ...RESUMO_VAZIO, porPagamento: fatiasVazias(), error: error.message }
+    return { ...RESUMO_VAZIO, porPagamento: fatiasVazias(), error }
   }
-
-  const linhas = (data ?? []) as unknown as RawResumoRow[]
 
   // Somar moedas diferentes num total só seria simplesmente errado: R$ 100 e
   // US$ 100 não são 200 de nada. Agregamos por moeda e a tela mostra a
@@ -262,7 +257,7 @@ export async function getVendasResumo(filtros: VendaFilters): Promise<VendasResu
       ),
       ...(naoInformado && naoInformado.quantidade > 0 ? [naoInformado] : []),
     ],
-    truncado: linhas.length >= TETO_AGREGACAO,
+    truncado,
     error: null,
   }
 }
@@ -339,6 +334,7 @@ export async function listVendas(filtros: VendaFilters): Promise<{
     if (c.op === "or") q = q.or(c.filtro)
     else if (c.op === "is-null") q = q.is(c.coluna, null)
     else if (c.op === "not-null") q = q.not(c.coluna, "is", null)
+    else if (c.op === "lt") q = q.lt(c.coluna, c.valor)
     else q = q[c.op](c.coluna, c.valor)
   }
 

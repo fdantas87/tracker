@@ -9,17 +9,9 @@
  * "'server-only' cannot be imported from a Client Component module".
  */
 
-import { inicioDoDiaLocal } from "./timezone"
+import type { PeriodoKey } from "./periodo"
 
-/** Mesma semântica das outras telas: dias de calendário, não janela deslizante. */
-export const PERIODOS = {
-  hoje: { label: "Hoje", dias: 1 },
-  "7d": { label: "7 dias", dias: 7 },
-  "30d": { label: "30 dias", dias: 30 },
-  tudo: { label: "Tudo", dias: null },
-} as const
-
-export type PeriodoKey = keyof typeof PERIODOS
+export { PERIODOS, lerPeriodo, periodoIntervalo, type PeriodoKey } from "./periodo"
 
 /**
  * Igual ao padrão de `./filters`, que é o módulo de onde o seletor de período
@@ -33,14 +25,6 @@ export type GeoFilters = {
   periodo: PeriodoKey
   /** Filtro de texto opcional para localização. */
   q?: string
-}
-
-/** Início do recorte, ou null para "tudo" — sempre meia-noite no fuso do painel. */
-export function periodoInicio(periodo: PeriodoKey): Date | null {
-  const cfg = PERIODOS[periodo] ?? PERIODOS[PERIODO_PADRAO]
-  if (cfg.dias === null) return null
-
-  return inicioDoDiaLocal(cfg.dias - 1)
 }
 
 /**

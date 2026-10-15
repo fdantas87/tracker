@@ -8,10 +8,9 @@ import { GeoFilters } from "@/components/dashboard/geo-filters"
 import { GeoView } from "@/components/dashboard/geo-view"
 import { getReceitaPorLocal, getVisitantesPorLocal } from "@/lib/dashboard/geo"
 import {
-  PERIODOS,
+  lerPeriodo,
   PERIODO_PADRAO,
   type GeoFilters as GeoFiltros,
-  type PeriodoKey,
 } from "@/lib/dashboard/geo-filters"
 import { pageTitle } from "@/lib/branding"
 
@@ -31,7 +30,7 @@ function lerFiltros(sp: Record<string, string | string[] | undefined>): GeoFiltr
 
   return {
     q: texto(sp.q),
-    periodo: periodo && periodo in PERIODOS ? (periodo as PeriodoKey) : PERIODO_PADRAO,
+    periodo: lerPeriodo(periodo, PERIODO_PADRAO),
   }
 }
 
