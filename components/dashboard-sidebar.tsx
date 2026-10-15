@@ -1,10 +1,11 @@
 "use client"
 
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useSearchParams } from "next/navigation"
 import { useEffect, useRef } from "react"
 
 import { BRAND_NAME } from "@/lib/branding"
+import { PERIODO_PADRAO } from "@/lib/dashboard/filters"
 import { useIsTabletRange } from "@/hooks/use-tablet-range"
 import {
   Activity,
@@ -51,6 +52,9 @@ const NAV_ITEMS = [
   { href: "/pixels", label: "Pixels", icon: Settings },
 ] as const
 
+// Telas que usam o seletor de período da topbar (espelha SHOW_ON_ROUTES de lá).
+const ROTAS_COM_PERIODO = ["/", "/eventos", "/leads", "/vendas", "/geo", "/mapa-de-calor"]
+
 const HEALTH_VIEW = {
   ok: { icon: CheckCircle2, color: "text-primary", ring: "bg-primary/40", title: "Tudo OK" },
   warn: { icon: TriangleAlert, color: "text-amber", ring: "bg-amber/40", title: "Atenção" },
@@ -81,6 +85,7 @@ export function DashboardSidebar({
   hasStoredPreference?: boolean
 }) {
   const pathname = usePathname()
+  const searchParams = useSearchParams()
   const health = HEALTH_VIEW[healthLevel]
   const HealthIcon = health.icon
   const { setOpenMobile, isMobile, open, setOpen } = useSidebar()
@@ -104,6 +109,17 @@ export function DashboardSidebar({
   // No celular a navegação é um drawer: fecha sozinho ao escolher um item.
   function handleNavigate() {
     if (isMobile) setOpenMobile(false)
+  }
+
+  // O período escolhido na topbar acompanha a navegação entre telas. Fora de uma
+  // tela com seletor (ex.: Integrações) ele só é repassado se já estiver na URL.
+  const periodoAtual =
+    searchParams.get("periodo") ??
+    (ROTAS_COM_PERIODO.includes(pathname) ? PERIODO_PADRAO : null)
+
+  function hrefDe(href: string) {
+    if (!periodoAtual || !ROTAS_COM_PERIODO.includes(href)) return href
+    return `${href}?periodo=${encodeURIComponent(periodoAtual)}`
   }
 
   function isActive(href: string) {
@@ -139,7 +155,7 @@ export function DashboardSidebar({
                     tooltip={item.label}
                     size="lg"
                   >
-                    <Link href={item.href} onClick={handleNavigate}>
+                    <Link href={hrefDe(item.href)} onClick={handleNavigate}>
                       <item.icon />
                       <span className="truncate transition-all duration-300 ease-in-out group-data-[collapsible=icon]:w-0 group-data-[collapsible=icon]:opacity-0">
                         {item.label}
