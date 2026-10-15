@@ -195,7 +195,7 @@ export async function getStatusCounts(
 ): Promise<Record<DispatchStatus, number> & { total: number }> {
   const supabase = await createClient()
 
-  const vazio = {
+  const resultado = {
     pending: 0,
     sending: 0,
     sent: 0,
@@ -204,21 +204,34 @@ export async function getStatusCounts(
     total: 0,
   }
 
-  let q = supabase.from("events_log").select("dispatch_status")
-  for (const c of condicoesDe(filtros, { ignorarStatus: true })) {
-    q = c.op === "or" ? q.or(c.filtro) : q[c.op](c.coluna, c.valor)
-  }
+  // Uma contagem exata no banco por status (`head: true` não traz linha
+  // nenhuma). Ler as linhas e contar em JS esbarrava no teto de 1.000 do
+  // PostgREST e os chips travavam nesse número.
+  const status = Object.keys(resultado).filter((k) => k !== "total") as DispatchStatus[]
 
-  const { data, error } = await q.limit(20_000)
+  const contagens = await Promise.all(
+    status.map(async (s) => {
+      let q = supabase
+        .from("events_log")
+        .select("id", { count: "exact", head: true })
+        .eq("dispatch_status", s)
+      for (const c of condicoesDe(filtros, { ignorarStatus: true })) {
+        q = c.op === "or" ? q.or(c.filtro) : q[c.op](c.coluna, c.valor)
+      }
+      const { count, error } = await q
+      return error ? null : (count ?? 0)
+    })
+  )
 
-  if (error || !data) return vazio
+  // Qualquer falha: zera tudo, como antes, em vez de mostrar um total parcial.
+  if (contagens.some((n) => n === null)) return resultado
 
-  for (const row of data as { dispatch_status: DispatchStatus }[]) {
-    if (row.dispatch_status in vazio) vazio[row.dispatch_status] += 1
-    vazio.total += 1
-  }
+  status.forEach((s, i) => {
+    resultado[s] = contagens[i] as number
+    resultado.total += contagens[i] as number
+  })
 
-  return vazio
+  return resultado
 }
 
 /**
@@ -273,15 +286,39 @@ export async function getSerieDiaria(filtros: EventFilters): Promise<SeriePonto[
 export async function getEventNames(): Promise<string[]> {
   const supabase = await createClient()
 
-  const { data, error } = await supabase
-    .from("events_log")
-    .select("event_name")
-    .limit(20_000)
+  // O PostgREST devolve no máximo 1.000 linhas por requisição, então a lista é
+  // lida em páginas. Com `.limit(20_000)` só vinham as 1.000 primeiras e eventos
+  // mais raros (Purchase) ficavam fora do filtro.
+  const nomes = new Set<string>(EVENTOS_DO_FUNIL)
+  const PAGINA = 1000
 
-  if (error || !data) return []
+  for (let de = 0; de < 20_000; de += PAGINA) {
+    const { data, error } = await supabase
+      .from("events_log")
+      .select("event_name")
+      .order("id")
+      .range(de, de + PAGINA - 1)
 
-  return [...new Set((data as { event_name: string }[]).map((r) => r.event_name))].sort()
+    if (error || !data) break
+    for (const r of data as { event_name: string }[]) nomes.add(r.event_name)
+    if (data.length < PAGINA) break
+  }
+
+  return [...nomes].sort()
 }
+
+/** Etapas do funil sempre disponíveis no filtro, mesmo antes de o primeiro evento chegar. */
+const EVENTOS_DO_FUNIL = [
+  "PageView",
+  "ViewContent",
+  "CustomizeProduct",
+  "Lead",
+  "CompleteRegistration",
+  "SubmitApplication",
+  "InitiateCheckout",
+  "AddPaymentInfo",
+  "Purchase",
+]
 
 export type Localizacao = {
   country: string | null
