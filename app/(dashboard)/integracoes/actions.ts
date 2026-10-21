@@ -18,6 +18,7 @@ import { createServiceClient } from "@/lib/supabase/service"
 // Tipo e constante de estado vivem em lib/settings/action-state.ts (o mesmo
 // módulo usado pelas actions de Configurações). Ver scripts/check-server-actions.mjs.
 import type { ActionState } from "@/lib/settings/action-state"
+import { isPlataformaSemCredencial } from "@/lib/settings/platforms"
 
 /**
  * Formatos das duas credenciais do Stripe.
@@ -179,8 +180,35 @@ export async function toggleStripeActive(
     return succeed(
       nextActive
         ? "Integração marcada como ativa."
-        : "Integração marcada como inativa. Os webhooks continuam sendo recebidos e as vendas, registradas."
+        : "Stripe desativado. As credenciais ficam guardadas; os webhooks são ignorados até religar."
     )
+  } catch (error) {
+    return fail(toMessage(error, "Falha ao atualizar a integração."))
+  }
+}
+
+/**
+ * Liga ou desliga PerfectPay/Bask. Desligar não apaga a linha: a configuração
+ * fica gravada e o webhook da plataforma passa a ser ignorado.
+ */
+export async function setPlatformActive(
+  platform: string,
+  active: boolean
+): Promise<ActionState> {
+  try {
+    await requireUser()
+
+    if (!isPlataformaSemCredencial(platform)) return fail("Plataforma desconhecida.")
+
+    const supabase = createServiceClient()
+    const { error } = await supabase
+      .from("platform_integrations")
+      .upsert({ platform, is_active: active }, { onConflict: "platform" })
+
+    if (error) return fail(`Não foi possível atualizar: ${error.message}`)
+
+    revalidatePath("/integracoes")
+    return succeed(active ? "Integração ativada." : "Integração desativada.")
   } catch (error) {
     return fail(toMessage(error, "Falha ao atualizar a integração."))
   }

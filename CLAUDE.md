@@ -1513,6 +1513,7 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - **Bask — o que falta, e é do usuário/cliente:** (1) publicar o código novo (o `track.js` com `sourceUrl()` e o diálogo); (2) na Bask, tirar o id do GA4 do card Google Analytics (é o mesmo do tracker) e manter o Meta Pixel nativo desligado; (3) no container GTM cadastrado na Bask, criar a tag "HTML personalizado" com o código de Integrações → Integrar plataforma → Bask, acionada em todas as páginas, e publicar; (4) percorrer um checkout de teste em janela anônima e conferir Lead, InitiateCheckout e SubmitApplication na tela Eventos; (5) antes do lançamento, verificar o domínio `intake.` na Bask (hoje "não verificado"). **Adiado por decisão do usuário:** ligar o add-on Webhooks (pay-as-you-go, 30 dias grátis) — só aí dá para escrever o adaptador contra o payload real e ter Purchase da Bask.
 - **Clarity — o que falta:** (1) rodar `20261005120000_clarity_integration.sql` no SQL Editor de cada banco e publicar (no banco do ambiente de desenvolvimento ela já está aplicada — a tela abriu o estado "não conectado" sem erro em 2026-10-05); (2) na tela **Mapa de Calor**, seguir o assistente: colar o endereço do projeto Clarity e o token da Data Export API (gerado só para o tracker) — salvar o token já confere no Clarity e traz os primeiros dados; (4) **conferir o `payload` do primeiro snapshot** (`select payload from clarity_snapshots order by id limit 1`) contra `lib/clarity/normalize.ts` e apertar os nomes de campo — só Traffic tem formato documentado; (5) clicar num botão "Mapa" e confirmar que o Clarity abre a página certa (`url_h`), e que o ID da URL do Clarity é o mesmo do script; (6) gerar o token do MCP e conectar pelo `claude mcp add` e pelo conector do claude.ai (`?token=`); (7) em site de saúde, Masking → Strict.
 - **Webhook `custom` + Bask — o que falta (2026-10-05):** (1) rodar `20261005205000_platform_custom_bask.sql` no SQL Editor **ANTES do deploy** — sem ela o CHECK recusa a linha e a venda `custom`/`bask` não é registrada; (2) publicar o código; (3) na Bask, Settings → Webhooks & API, criar **um webhook por evento** (Payment Succeeded, Payment Refunded, Payment Canceled, Dispute Created, Dispute Updated) para `https://SEU_DOMINIO/api/webhook/bask` com o header `x-webhook-token`; (4) testar com o botão Test do Payment Refunded (200 = URL e token certos; 400 traz os nomes dos campos); (5) na **primeira venda real**, conferir `raw_webhook` em Vendas e apertar a leitura do adaptador — principalmente se há email/telefone do paciente e se o valor está em dólar.
+- **Tags de plataforma (2026-10-21):** (1) rodar `20261021120000_platform_integrations.sql` no SQL Editor de cada banco **ANTES do deploy**; (2) publicar; (3) em cada projeto, conferir em Integrações → Plataformas que as plataformas em uso estão acesas — a migration só ativa as que já têm venda registrada.
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
 
 ---
@@ -1569,6 +1570,26 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 ---
 
 ## Histórico
+
+- **2026-10-21:** Tags de plataforma por projeto em Integrações → Plataformas.
+  Antes, o card da PerfectPay aparecia em todo projeto com token de webhook
+  (`isPerfectPayConfigured = hasWebhookToken`), e a Bask não tinha card. Agora
+  Stripe, PerfectPay e Bask aparecem sempre: apagadas = desativadas (clique
+  para configurar e ativar), acesas = ativas, com switch para desligar.
+  Estado de PerfectPay/Bask em `platform_integrations` (migration
+  `20261021120000_platform_integrations.sql`; sem linha = desativada); o
+  Stripe segue em `stripe_accounts.is_active`. **Desligado bloqueia o webhook
+  da plataforma** (200 `plataforma_desativada`, nada gravado) — inclusive o
+  Stripe, que antes só mudava o rótulo. A configuração fica guardada.
+  Limites: a tag da Bask no GTM não é controlável daqui (desligar a Bask para
+  só o webhook; o diálogo de confirmação diz isso); `custom`/hotmart & cia.
+  não têm tag e passam sempre; falha de leitura do estado deixa o webhook
+  passar. A migration ativa sozinha plataforma que já tem venda em
+  `purchases`; **projeto que usa PerfectPay/Bask sem nenhuma venda ainda
+  precisa ativar a tag à mão**, ou o webhook passa a ser ignorado.
+  Verificado: `setup.sql` regerado, `tsc` e lint limpos, build verde.
+  **Não verificado:** a migration não foi aplicada (regra do projeto) e a tela
+  não foi aberta num navegador.
 
 - **2026-10-21:** InitiateCheckout da Bask nunca chegava. Causa, lida no bundle
   de produção (`intake.viventra.health/start-online-visit`, ~300 chunks): o

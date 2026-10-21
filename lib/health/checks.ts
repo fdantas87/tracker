@@ -1,6 +1,7 @@
 import "server-only"
 
 import { createClient } from "@/lib/supabase/server"
+import { createServiceClient } from "@/lib/supabase/service"
 import { getClarityAccount } from "@/lib/clarity/queries"
 import { getStripeAccount } from "@/lib/settings/queries"
 import type { HealthIssue, HealthLevel, HealthStatus } from "./types"
@@ -10,7 +11,7 @@ export async function getHealthStatus(): Promise<HealthStatus> {
   const supabase = await createClient()
   const issues: HealthIssue[] = []
 
-  const [visitors, events, purchases, stripe, clarity] = await Promise.all([
+  const [visitors, events, purchases, stripe, clarity, platforms] = await Promise.all([
     supabase.from("visitors").select("*", { count: "exact", head: true }),
     supabase.from("events_log").select("*", { count: "exact", head: true }),
     supabase.from("purchases").select("*", { count: "exact", head: true }),
@@ -25,6 +26,10 @@ export async function getHealthStatus(): Promise<HealthStatus> {
         error: error instanceof Error ? error.message : "erro desconhecido",
       }),
     ),
+    createServiceClient()
+      .from("platform_integrations")
+      .select("platform", { head: true, count: "exact" })
+      .then(({ error }) => error?.message ?? null),
   ])
 
   const dbErrors = [visitors, events, purchases].flatMap((r) =>
@@ -42,6 +47,14 @@ export async function getHealthStatus(): Promise<HealthStatus> {
     issues.push({
       title: "Integração do Stripe indisponível",
       message: `Provável migration pendente: 20260921130000_stripe_integration.sql. Detalhe: ${stripe}`,
+      level: "warn",
+    })
+  }
+
+  if (platforms) {
+    issues.push({
+      title: "Estado das plataformas indisponível",
+      message: `Provável migration pendente: 20261021120000_platform_integrations.sql. Detalhe: ${platforms}`,
       level: "warn",
     })
   }

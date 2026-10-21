@@ -13,6 +13,7 @@ import {
   checkRateLimit,
   rateLimitHeaders,
 } from "@/lib/rate-limit"
+import { isPlatformDisabled } from "@/lib/settings/queries"
 import { createServiceClient } from "@/lib/supabase/service"
 import { parseJsonText } from "@/lib/validation"
 import { getAdapter, obterPaisDaMoeda } from "@/lib/webhooks/adapters"
@@ -136,6 +137,14 @@ export async function POST(
   if (!verifyWebhookToken(token, settings.webhook_token_hash)) {
     // Nunca logar a URL completa: ela carrega o token na querystring.
     return Response.json({ error: "nao_autorizado" }, { status: 401 })
+  }
+
+  // --- 1.2. plataforma desativada no painel ---------------------------------
+  // 200, não 4xx: a Bask desliga o endpoint com 50% de falha em 24 h e as
+  // plataformas reenviam o que recebe erro. Desativado = nada gravado, nenhum
+  // Purchase.
+  if (await isPlatformDisabled(adapter.platform)) {
+    return Response.json({ ok: true, ignored: "plataforma_desativada" })
   }
 
   // --- 1.5. assinatura da plataforma ---------------------------------------

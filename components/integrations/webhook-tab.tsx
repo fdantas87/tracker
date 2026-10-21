@@ -30,9 +30,10 @@ export function WebhookTab() {
             <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">Token do webhook</h2>
           </div>
           <p className="mx-auto max-w-lg text-[14px] text-muted-foreground sm:text-base text-balance">
-            Autentica as compras que chegam da plataforma de venda. Está salvo
-            apenas como hash, então não dá para consultá-lo — se perder, gere
-            outro e atualize a URL cadastrada na plataforma.
+            Exclusivo deste projeto: autentica as compras de todas as
+            plataformas conectadas a ele, e nenhum outro projeto o aceita. Está
+            salvo apenas como hash, então não dá para consultá-lo — se perder,
+            gere outro e atualize a URL cadastrada em cada plataforma.
           </p>
         </div>
 

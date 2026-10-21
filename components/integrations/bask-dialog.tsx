@@ -44,10 +44,12 @@ export function BaskDialog({
   open,
   onOpenChange,
   hasWebhookToken,
+  footer,
 }: {
   open: boolean
   onOpenChange: (open: boolean) => void
   hasWebhookToken: boolean
+  footer?: React.ReactNode
 }) {
   const origin = typeof window !== "undefined" ? window.location.origin : ""
   const snippet = baskBridgeSnippet(origin)
@@ -184,6 +186,7 @@ export function BaskDialog({
             </div>
           </TabsContent>
         </Tabs>
+        {footer}
       </DialogContent>
     </Dialog>
   )

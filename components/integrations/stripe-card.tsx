@@ -328,7 +328,7 @@ function WebhookSetup({ hasWebhookToken }: { hasWebhookToken: boolean }) {
           <p className="text-xs">
             Ainda não existe token de webhook neste painel. Gere um em
             Configurações → Geral — sem ele a rota devolve 503 e nenhuma venda é
-            registrada, nem do Stripe nem do PerfectPay.
+            registrada, de nenhuma plataforma.
           </p>
         </div>
       ) : null}

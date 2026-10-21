@@ -3,6 +3,11 @@ import "server-only"
 import { createServiceClient } from "@/lib/supabase/service"
 import { ACCOUNT_CONFIG, type AccountKind } from "./config"
 import { isDispatchMode, type DispatchMode } from "./dispatch-modes"
+import {
+  PLATAFORMAS_SEM_CREDENCIAL,
+  isPlataformaSemCredencial,
+  type PlatformStates,
+} from "./platforms"
 
 /**
  * Leitura das tabelas de configuração.
@@ -157,6 +162,57 @@ export async function getStripeAccount(): Promise<StripeAccountRow | null> {
     hasWebhookSecret: Boolean(data.webhook_secret_vault_id),
     updatedAt: data.updated_at ?? null,
   }
+}
+
+/**
+ * Quais plataformas sem credencial própria estão ativas neste projeto.
+ * Sem linha = desativada. Falha de leitura (migration pendente) = tudo
+ * desativado na tela; o diagnóstico fica para o ícone de status.
+ */
+export async function getPlatformStates(): Promise<PlatformStates> {
+  const states = Object.fromEntries(
+    PLATAFORMAS_SEM_CREDENCIAL.map((p) => [p, false])
+  ) as PlatformStates
+
+  const supabase = createServiceClient()
+  const { data, error } = await supabase
+    .from("platform_integrations")
+    .select("platform, is_active")
+
+  if (error || !data) return states
+  for (const row of data) {
+    if (isPlataformaSemCredencial(row.platform)) states[row.platform] = Boolean(row.is_active)
+  }
+  return states
+}
+
+/**
+ * O webhook desta plataforma deve ser ignorado? Só plataformas que viram tag
+ * na tela são controladas; as demais (custom, hotmart...) passam sempre.
+ * Falha de leitura deixa passar: perder venda por erro nosso é pior.
+ */
+export async function isPlatformDisabled(platform: string): Promise<boolean> {
+  const supabase = createServiceClient()
+
+  if (platform === "stripe") {
+    const { data, error } = await supabase
+      .from("stripe_accounts")
+      .select("is_active")
+      .eq("id", true)
+      .maybeSingle()
+    if (error || !data) return false
+    return !data.is_active
+  }
+
+  if (!isPlataformaSemCredencial(platform)) return false
+
+  const { data, error } = await supabase
+    .from("platform_integrations")
+    .select("is_active")
+    .eq("platform", platform)
+    .maybeSingle()
+  if (error) return false
+  return !data?.is_active
 }
 
 /**

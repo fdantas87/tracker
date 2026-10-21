@@ -24,6 +24,7 @@ export function IntegrationCard({
   actions,
   testResult,
   children,
+  onOpen,
 }: {
   name: string
   description?: string
@@ -34,15 +35,36 @@ export function IntegrationCard({
   actions?: React.ReactNode
   testResult?: React.ReactNode
   children?: React.ReactNode
+  /** Card apagado e clicável: abre a configuração para ativar. */
+  onOpen?: () => void
 }) {
   const indisponivel = status === "em-breve"
+  const apagado = indisponivel || isActive === false
   const config = { glow: "bg-primary", bg: "bg-background/50", border: "border-border" }
 
   return (
-    <li className={cn(
-      "group relative flex flex-col justify-between overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-5 sm:p-6 shadow-sm transition-all hover:shadow-md hover:border-primary/30",
-      indisponivel && "opacity-60"
-    )}>
+    <li
+      onClick={onOpen}
+      onKeyDown={
+        onOpen
+          ? (e) => {
+              if (e.target !== e.currentTarget) return
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault()
+                onOpen()
+              }
+            }
+          : undefined
+      }
+      role={onOpen ? "button" : undefined}
+      tabIndex={onOpen ? 0 : undefined}
+      aria-label={onOpen ? `Configurar ${name}` : undefined}
+      className={cn(
+        "group relative flex flex-col justify-between overflow-hidden rounded-3xl border bg-gradient-to-b from-primary/5 to-transparent p-5 sm:p-6 shadow-sm transition-all hover:shadow-md hover:border-primary/30",
+        apagado && "opacity-60 grayscale hover:opacity-90 hover:grayscale-0",
+        onOpen && "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+      )}
+    >
       <div className={cn("pointer-events-none absolute -top-10 -left-10 h-32 w-32 rounded-full blur-3xl opacity-15 transition-opacity group-hover:opacity-30", config.glow)} />
 
       <div className="relative z-10 flex items-start justify-between gap-4">
@@ -63,7 +85,11 @@ export function IntegrationCard({
           </div>
         </div>
 
-        {headerAction}
+        {headerAction ? (
+          <div onClick={(e) => e.stopPropagation()} onKeyDown={(e) => e.stopPropagation()}>
+            {headerAction}
+          </div>
+        ) : null}
       </div>
 
       <div className="relative z-10 mt-6 flex items-center justify-between border-t border-border/50 pt-4">
@@ -72,7 +98,7 @@ export function IntegrationCard({
             isActive ? (
               <Badge variant="outline" className="border-green-500/30 text-green-600 bg-green-500/10 dark:text-green-400">Ativo</Badge>
             ) : (
-              <Badge variant="outline" className="text-muted-foreground">Inativo</Badge>
+              <Badge variant="outline" className="text-muted-foreground">Desativado</Badge>
             )
           ) : (
             <Badge variant="outline" className={status === "conectado" ? "border-green-500/30 text-green-600 bg-green-500/10 dark:text-green-400" : "text-muted-foreground"}>
@@ -82,7 +108,11 @@ export function IntegrationCard({
         </div>
         
         {actions && (
-          <div className="flex items-center gap-1">
+          <div
+            className="flex items-center gap-1"
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
             {actions}
           </div>
         )}
