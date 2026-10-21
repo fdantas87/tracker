@@ -1571,6 +1571,29 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-10-21:** Lead da Bask saía anônimo, e os eventos da fila junto. Causa
+  no código: a ponte do GTM disparava `Lead` no `signup` sem `identify` — o único
+  `identify` dela era no `purchase`, então o visitante do questionário só ganhava
+  PII na tela de obrigado. Três correções:
+  - **Ponte (`bask-bridge.ts`):** lê email/telefone/nome POR NOME DE CAMPO em
+    todo push (inclusive `the_basics`/`input_group` serializados e o formato
+    `{ name, value }`), acumula entre pushes e chama `identify` antes do Lead.
+    Só esses 4 valores saem. **Os nomes reais dos campos no `dataLayer` não
+    foram confirmados** — conferir no Preview do GTM.
+  - **Costura de identidade (`lib/dispatch/visitor-stitch.ts`, chamada no
+    `/api/identify`):** mesmo navegador com dois `trck_user_id` (mesmo `_fbp` ou
+    `_ga`) — a PII de um completa o outro via `fill_visitor_pii` (só buraco) e
+    a fila de quem ganhou PII é adiantada. Não une linhas nem troca id de evento.
+    Teto de 10 irmãos (mais que isso é dado ruim, ignora).
+  - **`track.js`:** links para outro subdomínio da mesma propriedade ganham
+    `?tuid=`, e cookie `thetrack_tuid` duplicado (host-only antigo + domínio)
+    perde o host-only.
+  - Migration aditiva `20261021140000_visitors_fbp_index.sql` (índice em `fbp`;
+    sem ela funciona igual, só mais lento). Verificado: build verde, lint limpo,
+    6/6 no teste de mesa da ponte num `vm` (identify antes do Lead, email+nome
+    acumulados de pushes diferentes, nada de dado de saúde). **Não verificado:**
+    a costura contra o banco e o funil real.
+
 - **2026-10-21:** Tags de plataforma por projeto em Integrações → Plataformas.
   Antes, o card da PerfectPay aparecia em todo projeto com token de webhook
   (`isPerfectPayConfigured = hasWebhookToken`), e a Bask não tinha card. Agora

@@ -4,6 +4,7 @@ import { after } from "next/server"
 
 import { jsonResponse, preflightResponse } from "@/lib/cors"
 import { drainEventQueue } from "@/lib/dispatch/event-dispatch"
+import { stitchVisitor } from "@/lib/dispatch/visitor-stitch"
 import { getGeo, toInetOrNull } from "@/lib/geo"
 import { hashEmail, hashName, hashPhone } from "@/lib/crypto/hash"
 import { DEFAULT_PHONE_COUNTRY } from "@/lib/phone-country"
@@ -136,14 +137,21 @@ export async function POST(request: Request) {
     const { data: saved, error } = await supabase
       .from("visitors")
       .upsert(payload, { onConflict: "trck_user_id" })
-      .select("email_hash, phone_hash")
+      .select(
+        "trck_user_id, email, email_hash, phone_hash, first_name_hash, last_name_hash, fbp, ga_client_id"
+      )
       .maybeSingle()
 
     if (error) {
       return jsonResponse(request, { error: "persist_failed" }, 500)
     }
 
-    const identified = Boolean(saved?.email_hash || saved?.phone_hash)
+    // Mesmo navegador com outro id (outro subdomínio): a PII de um lado
+    // completa o outro, e a fila de quem ganhou PII é adiantada.
+    const costurados = saved ? await stitchVisitor(supabase, saved) : []
+    const identified =
+      Boolean(saved?.email_hash || saved?.phone_hash) ||
+      costurados.includes(trckUserId)
 
     if (hasPii) {
       // Primeira vez que a identidade aparece. `is null` preserva a semântica
@@ -153,15 +161,20 @@ export async function POST(request: Request) {
         .update({ identified_at: new Date().toISOString() })
         .eq("trck_user_id", trckUserId)
         .is("identified_at", null)
+    }
 
-      // LIBERAÇÃO ANTECIPADA: o motivo do atraso já aconteceu. Não faz sentido
-      // o PageView continuar esperando quando o dado que ele ia ganhar já está
-      // gravado. Adianta a fila deste visitante e drena na sequência.
+    // LIBERAÇÃO ANTECIPADA: o motivo do atraso já aconteceu. Não faz sentido
+    // o PageView continuar esperando quando o dado que ele ia ganhar já está
+    // gravado. Adianta a fila deste visitante (e dos irmãos que a costura
+    // acabou de completar) e drena na sequência.
+    const liberar = new Set(costurados)
+    if (hasPii) liberar.add(trckUserId)
+    if (liberar.size > 0) {
       after(async () => {
         try {
-          await supabase.rpc("flush_visitor_events", {
-            p_trck_user_id: trckUserId,
-          })
+          for (const id of liberar) {
+            await supabase.rpc("flush_visitor_events", { p_trck_user_id: id })
+          }
           await drainEventQueue(50)
         } catch {
           // Falha aqui só significa que os eventos saem no tique normal do

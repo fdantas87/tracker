@@ -80,10 +80,87 @@ export function baskBridgeSnippet(trackerOrigin: string): string {
     return ""
   }
 
+  // Identificacao: email, telefone e nome lidos POR NOME DE CAMPO em qualquer
+  // push (inclusive respostas serializadas em texto), acumulados entre pushes
+  // e mandados ao identify ANTES do Lead. Sem isto o visitante do questionario
+  // so ganhava PII na tela de obrigado, e os eventos da fila saiam anonimos.
+  // So estes 4 valores saem; o resto do payload (dado de saude) nunca.
+  var TRAIT_KEYS = {
+    email: ["email", "emailaddress", "useremail", "patientemail"],
+    phone: ["phone", "phonenumber", "mobile", "mobilephone", "cellphone", "telephone"],
+    first_name: ["firstname", "fname", "givenname"],
+    last_name: ["lastname", "lname", "surname", "familyname"]
+  }
+  var LABEL_FIELDS = ["name", "key", "id", "slug", "label", "question", "field"]
+  var VALUE_FIELDS = ["value", "answer", "response"]
+  var EMAIL_RE = /^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/
+  var traits = {}
+  var lastIdentified = ""
+
+  function norm(key) { return String(key).toLowerCase().replace(/[^a-z]/g, "") }
+
+  function traitOf(key) {
+    var k = norm(key)
+    for (var t in TRAIT_KEYS) if (TRAIT_KEYS[t].indexOf(k) !== -1) return t
+    return ""
+  }
+
+  function keep(trait, value) {
+    if (typeof value === "number" && trait === "phone") value = String(value)
+    if (typeof value !== "string") return
+    value = value.trim()
+    if (!value || value.length > 100) return
+    if (trait === "email" && !EMAIL_RE.test(value)) return
+    if (trait === "phone" && !/^[+\\d\\s().-]{8,20}$/.test(value)) return
+    traits[trait] = value
+  }
+
+  function scan(node, depth) {
+    if (depth > 5 || node == null) return
+    if (typeof node === "string") {
+      var s = node.trim()
+      if (s.length < 20000 && (s.charAt(0) === "{" || s.charAt(0) === "[")) {
+        try { scan(JSON.parse(s), depth + 1) } catch (e) {}
+      }
+      return
+    }
+    if (typeof node !== "object") return
+
+    // Resposta no formato { name: "email", value: "..." }
+    for (var l = 0; l < LABEL_FIELDS.length; l++) {
+      var label = node[LABEL_FIELDS[l]]
+      var labelTrait = typeof label === "string" ? traitOf(label) : ""
+      if (!labelTrait) continue
+      for (var v = 0; v < VALUE_FIELDS.length; v++) keep(labelTrait, node[VALUE_FIELDS[v]])
+    }
+
+    for (var key in node) {
+      if (!Object.prototype.hasOwnProperty.call(node, key)) continue
+      var trait = traitOf(key)
+      if (trait) keep(trait, node[key])
+      else if (node[key] && (typeof node[key] === "object" || typeof node[key] === "string")) {
+        scan(node[key], depth + 1)
+      }
+    }
+  }
+
+  function identifyIfReady() {
+    if (!traits.email && !traits.phone) return
+    var fingerprint = JSON.stringify(traits)
+    if (fingerprint === lastIdentified) return
+    lastIdentified = fingerprint
+    var copy = {}
+    for (var t in traits) copy[t] = traits[t]
+    withTracker(function (tracker) { tracker.identify(copy) })
+  }
+
   var sent = {}
 
   function handle(item) {
     if (!item || typeof item !== "object") return
+
+    scan(item, 0)
+    identifyIfReady()
 
     // gtag() empurra um objeto arguments: ["event", nome, params]
     if (item[0] === "event" && item[1] === "signup") {
@@ -115,16 +192,8 @@ export function baskBridgeSnippet(trackerOrigin: string): string {
       var patientId = first([ecommerce, item, ecommerce.user || {}, item.user || {}],
         ["patientId", "patient_id", "userId", "user_id", "customerId", "customer_id"])
       if (patientId) data.patient_id = patientId
-      var traits = {
-        email: ecommerce.email,
-        phone: ecommerce.phone,
-        first_name: ecommerce.firstName || ecommerce.first_name,
-        last_name: ecommerce.lastName || ecommerce.last_name
-      }
-      withTracker(function (tracker) {
-        tracker.identify(traits)
-        tracker.track("SubmitApplication", data)
-      })
+      // O identify com os dados do purchase ja saiu no scan() do topo.
+      withTracker(function (tracker) { tracker.track("SubmitApplication", data) })
     }
   }
 

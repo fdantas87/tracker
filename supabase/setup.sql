@@ -11,7 +11,7 @@
 -- Supabase e rode uma vez. O editor executa tudo numa transação única, então
 -- ou o schema inteiro aplica, ou nada aplica — não existe meio-termo.
 --
--- 18 arquivos, na ordem de aplicação:
+-- 19 arquivos, na ordem de aplicação:
 --   supabase/setup-preflight.sql                                         1eb5dba9
 --   supabase/migrations/20260916140000_extensions.sql                    b4e4fd34
 --   supabase/migrations/20260916140100_tables.sql                        245ec9a0
@@ -30,6 +30,7 @@
 --   supabase/migrations/20261005120000_clarity_integration.sql           00309238
 --   supabase/migrations/20261005205000_platform_custom_bask.sql          3a0a7b37
 --   supabase/migrations/20261021120000_platform_integrations.sql         5cf99d10
+--   supabase/migrations/20261021140000_visitors_fbp_index.sql            0265c428
 -- ============================================================================
 
 -- >>> supabase/setup-preflight.sql
@@ -1868,3 +1869,10 @@ on conflict (platform) do nothing;
 comment on column public.stripe_accounts.is_active is
   'Desligado bloqueia o webhook do Stripe (200, nada gravado). As credenciais '
   'continuam no Vault; religar volta a aceitar na hora.';
+
+-- >>> supabase/migrations/20261021140000_visitors_fbp_index.sql
+-- Costura de identidade (lib/dispatch/visitor-stitch.ts): o /api/identify
+-- procura, pelo `_fbp`, o mesmo navegador gravado com outro trck_user_id.
+-- `ga_client_id` já tem índice desde a fase 2; o `fbp` não tinha.
+-- Aditiva: sem ela a costura funciona igual, só com uma varredura mais lenta.
+create index if not exists visitors_fbp_idx on public.visitors (fbp);

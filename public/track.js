@@ -257,6 +257,20 @@
   }
 
   /**
+   * Dois cookies com o mesmo nome (um só do host, gravado antes do conserto do
+   * cookieDomain(), e um do domínio amplo) fazem cada subdomínio ler um id
+   * diferente: o document.cookie traz os dois, e o primeiro da lista é o mais
+   * antigo. Apagar o do host (sem `domain=`) deixa só o compartilhado.
+   */
+  function dropShadowedCookie(name) {
+    if (!cookieDomain()) return
+    var count = document.cookie.split("; ").filter(function (pair) {
+      return pair.indexOf(name + "=") === 0
+    }).length
+    if (count > 1) document.cookie = name + "=; Max-Age=0; path=/"
+  }
+
+  /**
    * Ordem importa: a URL vem primeiro porque é assim que a identidade
    * atravessa domínios (link de checkout, link de WhatsApp). Se o visitante
    * chegou com um id na URL, ele manda no que estava guardado aqui.
@@ -275,6 +289,7 @@
       return fromUrl
     }
 
+    dropShadowedCookie(COOKIE_NAME)
     var existing = getCookie(COOKIE_NAME) || storageGet(STORAGE_KEY)
     var fromLegacy = false
     if (!existing) {
@@ -840,6 +855,24 @@
         var url = new URL(href, location.href)
         var isCheckout = CHECKOUT_HOSTS.indexOf(url.hostname) !== -1
         var isWhats = WHATSAPP_HOSTS.indexOf(url.hostname) !== -1
+
+        // Outro subdomínio da mesma propriedade (lp. -> intake.): o cookie de
+        // domínio já deveria levar o id, mas a URL é a garantia quando ele
+        // falha (cookie bloqueado, host-only antigo). Não é checagem de
+        // segurança: o domínio vem do próprio navegador (cookieDomain()).
+        var dominio = cookieDomain()
+        var isSibling =
+          dominio &&
+          url.hostname !== location.hostname &&
+          ("." + url.hostname).slice(-dominio.length) === dominio
+        if (isSibling && !isCheckout && !isWhats) {
+          if (url.searchParams.get(URL_PARAM) !== trckUserId) {
+            url.searchParams.set(URL_PARAM, trckUserId)
+            link.setAttribute("href", url.toString())
+          }
+          continue
+        }
+
         if (!isCheckout && !isWhats) continue
 
         if (isWhats) {
