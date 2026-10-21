@@ -17,7 +17,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 /** O que a ponte traduz. Espelha o comentário de lib/integrations/bask-bridge.ts. */
 const TRADUCAO = [
   { bask: "signup", tracker: "Lead", quando: "conta criada ou login no questionário" },
-  { bask: "add_to_cart", tracker: "InitiateCheckout", quando: "plano escolhido no checkout" },
+  { bask: "begin_checkout", tracker: "InitiateCheckout", quando: "tela de pagamento aberta" },
   { bask: "purchase", tracker: "SubmitApplication", quando: "tela de obrigado — checkout enviado" },
 ]
 

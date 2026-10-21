@@ -9,8 +9,11 @@
  * O que a Bask empurra, lido no bundle do questionário em 2026-09-24:
  * - `gtag("event", "signup")` quando o paciente cria a conta ou entra nela
  *   → `Lead`
- * - `{ event: "add_to_cart", ecommerce }` ao escolher o plano no checkout
- *   → `InitiateCheckout`, uma vez por página
+ * - `{ event: "begin_checkout", sessionId, ecommerce }` ao abrir a tela de
+ *   pagamento → `InitiateCheckout`, uma vez por sessão do questionário.
+ *   Revisto em 2026-10-21: a ponte escutava `add_to_cart`, que a Bask só
+ *   empurra na tela de troca de variante do plano — o checkout normal nunca
+ *   o dispara, e nenhum InitiateCheckout chegava.
  * - `{ event: "purchase", ecommerce }` na tela de obrigado → `SubmitApplication`,
  *   NUNCA `Purchase`: é o checkout enviado, não o pagamento confirmado — o
  *   cartão pode estar só autorizado, esperando o médico. Purchase só vem do
@@ -90,9 +93,10 @@ export function baskBridgeSnippet(trackerOrigin: string): string {
       return
     }
 
-    if (item.event === "add_to_cart" && item.ecommerce) {
-      if (sent.checkout) return
-      sent.checkout = true
+    if (item.event === "begin_checkout" && item.ecommerce) {
+      var checkoutKey = "checkout:" + (item.sessionId || item.sessionUUID || "")
+      if (sent[checkoutKey]) return
+      sent[checkoutKey] = true
       var checkout = money(item.ecommerce)
       withTracker(function (tracker) { tracker.track("InitiateCheckout", checkout) })
       return

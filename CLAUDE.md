@@ -944,8 +944,8 @@ cliente; nada de tratamento, receita ou chat.
   do GTM (ou no Global JavaScript), exibido em Integrações → Plataformas →
   Integrar plataforma → Bask. Ele carrega o `track.js` do deploy e embrulha o
   `dataLayer.push`. A tradução foi tirada do bundle público do questionário
-  (2026-09-24), não suposta: `gtag("event","signup")` → `Lead`; `add_to_cart` →
-  `InitiateCheckout` (uma vez); `purchase` da tela de obrigado →
+  (2026-09-24), não suposta: `gtag("event","signup")` → `Lead`; `begin_checkout` →
+  `InitiateCheckout` (uma vez por `sessionId`); `purchase` da tela de obrigado →
   `SubmitApplication` com valor, moeda e `order_id` — **nunca** `Purchase`,
   porque é checkout enviado, não pagamento. Três detalhes que não são estéticos:
   - **`signup` chega como objeto `arguments` do gtag, não como objeto com
@@ -1569,6 +1569,18 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 ---
 
 ## Histórico
+
+- **2026-10-21:** InitiateCheckout da Bask nunca chegava. Causa, lida no bundle
+  de produção (`intake.viventra.health/start-online-visit`, ~300 chunks): o
+  checkout empurra `begin_checkout` (7 telas de checkout diferentes, todas via
+  `pushTagEvent` → `dataLayer.push({ event, sessionId, ecommerce })`); o
+  `add_to_cart` que a ponte escutava só sai na tela de troca de variante do
+  plano. A ponte agora traduz `begin_checkout`, uma vez por `sessionId`.
+  **O cliente precisa recopiar o código do diálogo e republicar a tag no GTM** —
+  a tag publicada é uma cópia, não se atualiza sozinha. Achado para a métrica de
+  etapas: o `dataLayer` recebe `gtag("event","screen_view",{ screen_name, … })`
+  a cada pergunta; os `questionnaire_question_viewed`/`_answered` vão só para o
+  backend da Bask, não para o `dataLayer`.
 
 - **2026-10-15:** Topbar ganhou "Ontem" e intervalo personalizado com
   calendário. O período virou um módulo só, `lib/dashboard/periodo.ts` (as 4
