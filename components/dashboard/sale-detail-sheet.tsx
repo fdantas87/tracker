@@ -22,7 +22,7 @@ import {
   formatarHoraNoFuso,
   formatarMoeda,
 } from "@/lib/dashboard/format"
-import type { VendaDetail } from "@/lib/dashboard/vendas"
+import type { VendaDetail, VendaUtm } from "@/lib/dashboard/vendas"
 
 function Campo({ titulo, children }: { titulo: string; children: ReactNode }) {
   return (
@@ -125,31 +125,51 @@ function Comprador({ venda }: { venda: VendaDetail }) {
   )
 }
 
+function vazia(utm: VendaUtm): boolean {
+  return !utm.source && !utm.medium && !utm.campaign && !utm.term && !utm.content
+}
+
+function BlocoUtm({ titulo, utm }: { titulo: string; utm: VendaUtm }) {
+  return (
+    <div className="min-w-0 space-y-2 rounded-lg border p-2.5">
+      <p className="text-xs font-medium">{titulo}</p>
+      {vazia(utm) ? (
+        <p className="text-xs text-muted-foreground">Sem UTM</p>
+      ) : (
+        <dl className="space-y-1.5 text-xs">
+          <Campo titulo="Source / Medium">
+            {[utm.source, utm.medium].filter(Boolean).join(" / ") || TRACO}
+          </Campo>
+          <Campo titulo="Campaign">{utm.campaign ?? TRACO}</Campo>
+          {utm.content ? <Campo titulo="Content">{utm.content}</Campo> : null}
+          {utm.term ? <Campo titulo="Term">{utm.term}</Campo> : null}
+        </dl>
+      )}
+    </div>
+  )
+}
+
 /**
- * A origem da venda: o que veio no próprio webhook, e o que veio da visita.
+ * A origem da venda, em primeiro e último toque.
  *
- * As duas podem divergir — a UTM da compra é a do link de checkout, a do
- * visitante é a da primeira visita. Mostrar as duas é o que permite ver quando
- * a atribuição se perdeu no meio do caminho.
+ * O primeiro é a chegada que trouxe a pessoa (o anúncio); o último é a
+ * chegada mais recente antes da compra (o link da bio, por exemplo). Os dois
+ * divergirem é a jornada normal, não um erro de atribuição.
  */
 function Origem({ venda }: { venda: VendaDetail }) {
-  const { utm } = venda
-  const vazio = !utm.source && !utm.medium && !utm.campaign && !utm.term && !utm.content
+  const { utm, firstUtm } = venda
 
   return (
     <Secao titulo="Origem da venda">
-      {vazio ? (
+      {vazia(utm) && vazia(firstUtm) ? (
         <p className="text-xs text-muted-foreground">
-          Nenhum parâmetro UTM chegou no webhook desta compra.
+          Nenhum parâmetro UTM chegou nesta compra, nem pelo webhook nem pela visita.
         </p>
       ) : (
-        <dl className="grid grid-cols-2 gap-3 text-xs">
-          <Campo titulo="Source">{utm.source ?? TRACO}</Campo>
-          <Campo titulo="Medium">{utm.medium ?? TRACO}</Campo>
-          <Campo titulo="Campaign">{utm.campaign ?? TRACO}</Campo>
-          <Campo titulo="Term">{utm.term ?? TRACO}</Campo>
-          <Campo titulo="Content">{utm.content ?? TRACO}</Campo>
-        </dl>
+        <div className="grid grid-cols-2 gap-2">
+          <BlocoUtm titulo="Primeiro toque" utm={firstUtm} />
+          <BlocoUtm titulo="Último toque" utm={utm} />
+        </div>
       )}
     </Secao>
   )
@@ -207,7 +227,7 @@ function Visitante({ venda }: { venda: VendaDetail }) {
             <span className="text-muted-foreground">{horaLocal.fuso}</span>
           </Campo>
         ) : null}
-        <Campo titulo="Origem da visita">{visitante.utm.source ?? "direto"}</Campo>
+        <Campo titulo="Último toque do visitante">{visitante.utm.source ?? "direto"}</Campo>
         {visitante.utm.campaign ? (
           <Campo titulo="Campanha da visita">{visitante.utm.campaign}</Campo>
         ) : null}

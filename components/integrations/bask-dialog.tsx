@@ -23,7 +23,9 @@ const TRADUCAO = [
 
 /** Os webhooks a criar na Bask. Espelha o mapa de lib/webhooks/adapters/bask.ts. */
 const WEBHOOKS = [
+  { evento: "Payment Created", efeito: "venda pendente, sem Purchase (cartão só autorizado)" },
   { evento: "Payment Succeeded", efeito: "venda aprovada + Purchase (inclusive renovação e refil)" },
+  { evento: "Payment Failed", efeito: "venda marcada como cancelada" },
   { evento: "Payment Refunded", efeito: "venda marcada como reembolsada" },
   { evento: "Payment Canceled", efeito: "venda marcada como cancelada" },
   { evento: "Dispute Created", efeito: "venda marcada como chargeback" },

@@ -204,6 +204,16 @@ export async function POST(
   // plausíveis só pra external_id, fbp, geo etc. aparecerem preenchidos. Nunca
   // um visitante real: o evento de mentira sujaria a jornada de um lead.
   if (purchase.isTest) {
+    // Teste de evento que não é Purchase (ex.: pagamento pendente): nada a
+    // simular, só confirmar que URL, token e leitura estão certos.
+    if (purchase.status !== "approved") {
+      return Response.json(
+        { ok: true, test: true, simulated: true, status: purchase.status,
+          note: "Nada foi gravado em Vendas nem enviado ao Meta/GA4." },
+        { status: 200 }
+      )
+    }
+
     const { data: visitanteTeste } = await supabase
       .from("visitors")
       .upsert(
@@ -277,7 +287,7 @@ export async function POST(
 
     // O que o payload não trouxe vem do visitante casado (o payload sempre tem
     // precedência). Na Bask o webhook de pagamento não traz email nem UTM, mas
-    // a visita tem: email do identify da tela de obrigado, UTM da 1ª visita.
+    // a visita tem: email do identify da tela de obrigado, UTM do último toque.
     // Nome e telefone o visitante só guarda em hash, então não há o que copiar
     // para a tela — para o Meta eles seguem indo, lidos do visitante no disparo.
     const doVisitante = (campo: string): string | null => {
@@ -326,6 +336,14 @@ export async function POST(
         utm_campaign: purchase.utmCampaign,
         utm_term: purchase.utmTerm,
         utm_content: purchase.utmContent,
+        // As utm_* acima são o último toque (payload, senão o visitante); o
+        // primeiro toque só existe no visitante. Requer a migration
+        // 20261022120000_utm_touches.sql ANTES do deploy.
+        first_utm_source: doVisitante("first_utm_source"),
+        first_utm_medium: doVisitante("first_utm_medium"),
+        first_utm_campaign: doVisitante("first_utm_campaign"),
+        first_utm_term: doVisitante("first_utm_term"),
+        first_utm_content: doVisitante("first_utm_content"),
         fbp: (match.visitor?.fbp as string | null) ?? null,
         fbc: (match.visitor?.fbc as string | null) ?? null,
         geo_country: (match.visitor?.geo_country as string | null) ?? null,

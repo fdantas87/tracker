@@ -265,20 +265,36 @@ export type LeadPurchaseRow = {
   createdAt: string
 }
 
+export type UtmSet = {
+  source: string | null
+  medium: string | null
+  campaign: string | null
+  term: string | null
+  content: string | null
+}
+
+/** Uma chegada com campanha (visitor_touches). */
+export type LeadTouch = UtmSet & {
+  id: string
+  touchedAt: string
+  referrer: string | null
+  landingUrl: string | null
+  /** Só se havia click id — o valor em si não interessa na tela. */
+  clickId: "fbclid" | "gclid" | null
+}
+
 export type LeadDetail = {
   trckUserId: string
   email: string | null
   identifiedAt: string | null
   createdAt: string
   updatedAt: string
-  utm: {
-    source: string | null
-    medium: string | null
-    campaign: string | null
-    term: string | null
-    content: string | null
-    referrer: string | null
-  }
+  /** Último toque, mais o referrer externo da primeira chegada. */
+  utm: UtmSet & { referrer: string | null }
+  /** null = nenhuma chegada com UTM registrada. */
+  firstUtm: (UtmSet & { at: string }) | null
+  /** Em ordem cronológica, do primeiro ao mais recente. */
+  touches: LeadTouch[]
   geo: {
     country: string | null
     region: string | null
@@ -304,7 +320,7 @@ export type LeadDetail = {
 }
 
 const COLUNAS_VISITANTE =
-  "trck_user_id,email,identified_at,created_at,updated_at,utm_source,utm_medium,utm_campaign,utm_term,utm_content,referrer,ip,user_agent,geo_country,geo_region,geo_city,geo_postal_code,geo_latitude,geo_longitude,geo_timezone,ga_client_id,ga_session_id,ga_session_number,ga_session_started_at"
+  "trck_user_id,email,identified_at,created_at,updated_at,utm_source,utm_medium,utm_campaign,utm_term,utm_content,referrer,first_utm_source,first_utm_medium,first_utm_campaign,first_utm_term,first_utm_content,first_touch_at,ip,user_agent,geo_country,geo_region,geo_city,geo_postal_code,geo_latitude,geo_longitude,geo_timezone,ga_client_id,ga_session_id,ga_session_number,ga_session_started_at"
 
 const COLUNAS_COMPRAS =
   "id,transaction_id,product_name,amount,currency,status,platform,created_at,buyer_first_name,buyer_last_name,buyer_phone"
@@ -326,17 +342,45 @@ type RawCompraRow = {
 export async function getLeadDetail(trckUserId: string): Promise<LeadDetail | null> {
   const supabase = await createClient()
 
-  const [{ data: visitante, error: erroVisitante }, { data: comprasData, error: erroCompras }] =
-    await Promise.all([
-      supabase.from("visitors").select(COLUNAS_VISITANTE).eq("trck_user_id", trckUserId).maybeSingle(),
-      supabase
-        .from("purchases")
-        .select(COLUNAS_COMPRAS)
-        .eq("trck_user_id", trckUserId)
-        .order("created_at", { ascending: false }),
-    ])
+  const [
+    { data: visitante, error: erroVisitante },
+    { data: comprasData, error: erroCompras },
+    { data: toquesData },
+  ] = await Promise.all([
+    supabase.from("visitors").select(COLUNAS_VISITANTE).eq("trck_user_id", trckUserId).maybeSingle(),
+    supabase
+      .from("purchases")
+      .select(COLUNAS_COMPRAS)
+      .eq("trck_user_id", trckUserId)
+      .order("created_at", { ascending: false }),
+    // Os 50 mais recentes, devolvidos em ordem cronológica. Erro = lista vazia:
+    // a jornada é complemento, não pode derrubar a ficha.
+    supabase
+      .from("visitor_touches")
+      .select(
+        "id,touched_at,utm_source,utm_medium,utm_campaign,utm_term,utm_content,referrer,landing_url,fbclid,gclid"
+      )
+      .eq("trck_user_id", trckUserId)
+      .order("touched_at", { ascending: false })
+      .limit(50),
+  ])
 
   if (erroVisitante || !visitante) return null
+
+  const touches: LeadTouch[] = (toquesData ?? [])
+    .map((t) => ({
+      id: t.id as string,
+      touchedAt: t.touched_at as string,
+      source: t.utm_source as string | null,
+      medium: t.utm_medium as string | null,
+      campaign: t.utm_campaign as string | null,
+      term: t.utm_term as string | null,
+      content: t.utm_content as string | null,
+      referrer: t.referrer as string | null,
+      landingUrl: t.landing_url as string | null,
+      clickId: t.fbclid ? ("fbclid" as const) : t.gclid ? ("gclid" as const) : null,
+    }))
+    .reverse()
 
   const comprasRaw = (erroCompras ? [] : (comprasData ?? [])) as unknown as RawCompraRow[]
 
@@ -373,6 +417,17 @@ export async function getLeadDetail(trckUserId: string): Promise<LeadDetail | nu
       content: visitante.utm_content as string | null,
       referrer: visitante.referrer as string | null,
     },
+    firstUtm: visitante.first_touch_at
+      ? {
+          source: visitante.first_utm_source as string | null,
+          medium: visitante.first_utm_medium as string | null,
+          campaign: visitante.first_utm_campaign as string | null,
+          term: visitante.first_utm_term as string | null,
+          content: visitante.first_utm_content as string | null,
+          at: visitante.first_touch_at as string,
+        }
+      : null,
+    touches,
     geo: {
       country: visitante.geo_country as string | null,
       region: visitante.geo_region as string | null,

@@ -236,6 +236,24 @@ Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) 
   sobrevivem (`sourceUrl()` / `URL_PARAMS_KEPT` no `track.js`). A query de
   terceiros carrega o que não deve sair da página — nome de medicamento na tela
   de obrigado da Bask, email em formulário mal feito. Ver "Integração Bask".
+- **Jornada de UTMs: primeiro toque, último toque e histórico** (2026-10-22).
+  Um *toque* é chegar com UTM, `fbclid` ou `gclid` na URL. O `track.js` guarda
+  o último em `thetrack_last` e o primeiro em `thetrack_first` (cookies de
+  domínio amplo, 90 dias), e `getUtms()` lê da URL, senão de `thetrack_last`.
+  Assim o quiz em outro subdomínio e as páginas sem UTM continuam sabendo a
+  origem. No servidor: `visitors.utm_*` = último toque, gravado como **conjunto**
+  (antes era campo a campo e misturava visitas); `first_utm_*` + `first_touch_at`
+  = primeiro, gravado uma vez; `visitor_touches` = histórico (`lib/touches.ts`).
+  A compra grava os dois (`purchases.first_utm_*` vem do visitante).
+  - **UTM carregada não é toque.** Links para subdomínio irmão e o checkout do
+    PerfectPay levam as UTMs do último toque (`carryUtms`, só se o link não
+    tiver UTM nenhuma, para não misturar conjuntos). O quiz vê UTM na URL;
+    referrer interno + mesmas UTMs + sem click id = mesma chegada. O servidor
+    ainda ignora a mesma tupla repetida em 30 min (reload, referrer cortado).
+  - O link da bio com UTM nova é toque novo naturalmente, sem regra especial.
+  - `visitors.referrer` agora é o primeiro referrer EXTERNO (preenche só
+    buraco); antes qualquer página interna o sobrescrevia.
+  - Só o identify grava toque e primeiro toque; tudo engole o próprio erro.
 - **`keepalive: true` no envio.** O InitiateCheckout dispara um instante antes de o navegador sair da página; sem keepalive a requisição é cancelada no meio e o evento se perde justo no passo mais valioso do funil.
 - **Clique como conversão é por classe, sem regra no painel** (2026-09-30).
   `class="btn thetrack-CustomizeProduct"` → o clique dispara `CustomizeProduct`
@@ -1513,6 +1531,7 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - **Bask — o que falta, e é do usuário/cliente:** (1) publicar o código novo (o `track.js` com `sourceUrl()` e o diálogo); (2) na Bask, tirar o id do GA4 do card Google Analytics (é o mesmo do tracker) e manter o Meta Pixel nativo desligado; (3) no container GTM cadastrado na Bask, criar a tag "HTML personalizado" com o código de Integrações → Integrar plataforma → Bask, acionada em todas as páginas, e publicar; (4) percorrer um checkout de teste em janela anônima e conferir Lead, InitiateCheckout e SubmitApplication na tela Eventos; (5) antes do lançamento, verificar o domínio `intake.` na Bask (hoje "não verificado"). **Adiado por decisão do usuário:** ligar o add-on Webhooks (pay-as-you-go, 30 dias grátis) — só aí dá para escrever o adaptador contra o payload real e ter Purchase da Bask.
 - **Clarity — o que falta:** (1) rodar `20261005120000_clarity_integration.sql` no SQL Editor de cada banco e publicar (no banco do ambiente de desenvolvimento ela já está aplicada — a tela abriu o estado "não conectado" sem erro em 2026-10-05); (2) na tela **Mapa de Calor**, seguir o assistente: colar o endereço do projeto Clarity e o token da Data Export API (gerado só para o tracker) — salvar o token já confere no Clarity e traz os primeiros dados; (4) **conferir o `payload` do primeiro snapshot** (`select payload from clarity_snapshots order by id limit 1`) contra `lib/clarity/normalize.ts` e apertar os nomes de campo — só Traffic tem formato documentado; (5) clicar num botão "Mapa" e confirmar que o Clarity abre a página certa (`url_h`), e que o ID da URL do Clarity é o mesmo do script; (6) gerar o token do MCP e conectar pelo `claude mcp add` e pelo conector do claude.ai (`?token=`); (7) em site de saúde, Masking → Strict.
 - **Webhook `custom` + Bask — o que falta (2026-10-05):** (1) rodar `20261005205000_platform_custom_bask.sql` no SQL Editor **ANTES do deploy** — sem ela o CHECK recusa a linha e a venda `custom`/`bask` não é registrada; (2) publicar o código; (3) na Bask, Settings → Webhooks & API, criar **um webhook por evento** (Payment Succeeded, Payment Refunded, Payment Canceled, Dispute Created, Dispute Updated) para `https://SEU_DOMINIO/api/webhook/bask` com o header `x-webhook-token`; (4) testar com o botão Test do Payment Refunded (200 = URL e token certos; 400 traz os nomes dos campos); (5) na **primeira venda real**, conferir `raw_webhook` em Vendas e apertar a leitura do adaptador — principalmente se há email/telefone do paciente e se o valor está em dólar.
+- **Jornada de UTMs (2026-10-22):** (1) rodar `20261022120000_utm_touches.sql` no SQL Editor de cada banco **ANTES do deploy** — sem ela o upsert do webhook (`first_utm_*`) falha e a venda não é registrada, e as fichas de Lead e Venda não abrem; (2) publicar; (3) o `track.js` novo vale sozinho nos sites (é servido pelo tracker), sem recopiar nada no GTM.
 - **Tags de plataforma (2026-10-21):** (1) rodar `20261021120000_platform_integrations.sql` no SQL Editor de cada banco **ANTES do deploy**; (2) publicar; (3) em cada projeto, conferir em Integrações → Plataformas que as plataformas em uso estão acesas — a migration só ativa as que já têm venda registrada.
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
 
@@ -1570,6 +1589,38 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 ---
 
 ## Histórico
+
+- **2026-10-22:** UTMs persistentes no funil inteiro (ver "Captura de
+  eventos → Jornada de UTMs"). Antes a UTM só valia na página que a tinha na
+  URL: o quiz em outro subdomínio chegava sem origem, e a volta pela bio
+  apagava a do anúncio campo a campo. Migration
+  `20261022120000_utm_touches.sql` (tabela `visitor_touches`, `first_utm_*` em
+  `visitors`/`purchases`, backfill). Fichas de Lead e Venda mostram primeiro e
+  último toque; a de Lead também a jornada. Verificado: `tsc` limpo, lint
+  limpo nos arquivos tocados (o erro de `any` na linha 94 de `leads.ts` é
+  anterior), `node --check`, **24/24 no teste de mesa do `track.js`** num `vm`
+  com cookies entre subdomínios (anúncio → LP → quiz decorado sem toque novo →
+  página sem UTM herdando → bio como 2º toque sem mexer no 1º → sem cookie
+  compartilhado) e **17/17 no de `lib/touches.ts`** (dedup por `touch_id` e
+  por tupla em 30 min, primeiro toque só onde `first_touch_at is null`, banco
+  sem migration sem lançar). **Não verificado:** a migration não foi aplicada e
+  nada rodou contra o banco nem no navegador.
+
+- **2026-10-21:** "Todas as vendas sumiram" era o período de 7 dias da topbar:
+  as vendas pagas da Bask eram de 08 e 12/10 e aparecem em "Tudo". Nada foi
+  apagado. A venda do dia estava **Pending** na Bask (cartão autorizado,
+  esperando o médico), e a loja só assinava Payment Succeeded e Refunded,
+  então nada chegava até a captura. O adaptador da Bask passou a traduzir
+  `paymentCreated` → venda **pendente, sem Purchase** (mesma leitura e mesma
+  chave do `paymentSucceeded`, que depois a aprova na mesma linha;
+  `resolveStatus` impede rebaixar) e `paymentFailed` → cancelada. Teste da
+  Bask para evento não aprovado responde 200 sem simular Purchase.
+  Verificado: build verde, lint limpo, 11/11 no teste de mesa do adaptador.
+  **Não verificado:** se o id do `paymentCreated` é o mesmo do
+  `paymentSucceeded` no payload real (senão a venda aparece duplicada). Para
+  conferir: `transaction_id` das vendas Bask deve ser o UUID do pagamento.
+  **Depende do usuário:** criar o webhook Payment Created (e Payment Failed)
+  na Bask, com a mesma URL e o header `x-webhook-token`.
 
 - **2026-10-21:** Lead da Bask saía anônimo, e os eventos da fila junto. Causa
   no código: a ponte do GTM disparava `Lead` no `signup` sem `identify` — o único

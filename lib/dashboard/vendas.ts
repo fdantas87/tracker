@@ -387,13 +387,10 @@ export type VendaDetail = {
     email: string | null
     telefone: string | null
   }
-  utm: {
-    source: string | null
-    medium: string | null
-    campaign: string | null
-    term: string | null
-    content: string | null
-  }
+  /** Último toque: o do webhook, senão o do visitante casado. */
+  utm: VendaUtm
+  /** Primeiro toque do visitante casado, gravado na compra. */
+  firstUtm: VendaUtm
   geo: { country: string | null; region: string | null; city: string | null }
   matchMethod: string | null
   matchFound: boolean
@@ -424,8 +421,16 @@ export type VendaDetail = {
   totalCliente: { compras: number; aprovado: number }
 }
 
+export type VendaUtm = {
+  source: string | null
+  medium: string | null
+  campaign: string | null
+  term: string | null
+  content: string | null
+}
+
 const COLUNAS_DETALHE =
-  "id,transaction_id,trck_user_id,email,buyer_first_name,buyer_last_name,buyer_phone,product_name,product_id,amount,currency,status,platform,platform_status,payment_method,platform_payment_method,utm_source,utm_medium,utm_campaign,utm_term,utm_content,geo_country,geo_region,geo_city,match_method,match_found,meta_event_id,created_at,updated_at"
+  "id,transaction_id,trck_user_id,email,buyer_first_name,buyer_last_name,buyer_phone,product_name,product_id,amount,currency,status,platform,platform_status,payment_method,platform_payment_method,utm_source,utm_medium,utm_campaign,utm_term,utm_content,first_utm_source,first_utm_medium,first_utm_campaign,first_utm_term,first_utm_content,geo_country,geo_region,geo_city,match_method,match_found,meta_event_id,created_at,updated_at"
 
 const COLUNAS_VISITANTE_VENDA =
   "trck_user_id,email,identified_at,created_at,user_agent,ip,geo_country,geo_region,geo_city,geo_postal_code,geo_timezone,utm_source,utm_medium,utm_campaign,referrer"
@@ -511,6 +516,13 @@ export async function getVendaDetail(purchaseId: string): Promise<VendaDetail | 
       campaign: venda.utm_campaign as string | null,
       term: venda.utm_term as string | null,
       content: venda.utm_content as string | null,
+    },
+    firstUtm: {
+      source: venda.first_utm_source as string | null,
+      medium: venda.first_utm_medium as string | null,
+      campaign: venda.first_utm_campaign as string | null,
+      term: venda.first_utm_term as string | null,
+      content: venda.first_utm_content as string | null,
     },
     geo: {
       country: venda.geo_country as string | null,

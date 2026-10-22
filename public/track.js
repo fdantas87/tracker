@@ -402,14 +402,140 @@
     return { id: null, number: null }
   }
 
-  function getUtms() {
+  // ---------------------------------------------------------------------
+  // Jornada de UTMs
+  // ---------------------------------------------------------------------
+  //
+  // Um TOQUE é chegar com campanha na URL (UTM, fbclid ou gclid). O último
+  // toque fica no cookie `thetrack_last` e o primeiro em `thetrack_first`, no
+  // domínio amplo: é isso que faz a origem do anúncio chegar ao quiz em outro
+  // subdomínio, e a página seguinte sem UTM na URL continuar sabendo de onde a
+  // pessoa veio. O histórico completo mora no servidor (visitor_touches).
+
+  var UTM_KEYS = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"]
+  var TOUCH_KEYS = UTM_KEYS.concat(["fbclid", "gclid"])
+  var LAST_TOUCH_COOKIE = "thetrack_last"
+  var FIRST_TOUCH_COOKIE = "thetrack_first"
+  var TOUCH_DAYS = 90
+
+  function readTouchCookie(name) {
+    try {
+      var value = JSON.parse(getCookie(name))
+      return value && typeof value === "object" ? value : null
+    } catch {
+      return null
+    }
+  }
+
+  function pick(source, keys) {
     var out = {}
-    var keys = ["utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content"]
     for (var i = 0; i < keys.length; i++) {
-      var value = param(keys[i])
-      if (value) out[keys[i]] = value
+      var value = source[keys[i]]
+      if (typeof value === "string" && value) out[keys[i]] = value
     }
     return out
+  }
+
+  /** Mesmo host ou outro subdomínio da mesma propriedade (lp. -> quiz.). */
+  function sameSite(hostname) {
+    if (hostname === location.hostname) return true
+    var dominio = cookieDomain()
+    return Boolean(dominio) && ("." + hostname).slice(-dominio.length) === dominio
+  }
+
+  function internalReferrer() {
+    try {
+      return sameSite(new URL(document.referrer).hostname)
+    } catch {
+      return false
+    }
+  }
+
+  /** O referrer só interessa quando vem de fora: navegação interna não é origem. */
+  function externalReferrer() {
+    return document.referrer && !internalReferrer() ? document.referrer : null
+  }
+
+  /**
+   * A URL traz as mesmas UTMs do último toque, e nenhum click id. O link
+   * decorado leva só as UTMs (o fbclid da chegada fica no cookie), então é só
+   * por elas que se compara; um click id na URL é sempre um clique novo.
+   */
+  function carriesLastTouch(touch, last) {
+    if (touch.fbclid || touch.gclid) return false
+    for (var i = 0; i < UTM_KEYS.length; i++) {
+      if ((touch[UTM_KEYS[i]] || null) !== (last[UTM_KEYS[i]] || null)) return false
+    }
+    return true
+  }
+
+  function readUrlTouch() {
+    var touch = {}
+    var any = false
+    for (var i = 0; i < TOUCH_KEYS.length; i++) {
+      var value = param(TOUCH_KEYS[i])
+      if (value) {
+        touch[TOUCH_KEYS[i]] = value.slice(0, 255)
+        any = true
+      }
+    }
+    return any ? touch : null
+  }
+
+  /**
+   * Grava os cookies e devolve o toque desta página, ou null.
+   *
+   * UTM CARREGADA não é toque novo: o link para o quiz leva as UTMs do último
+   * toque (decorateLinks), e o quiz as vê na URL. Se o referrer é o próprio
+   * site e as UTMs são as mesmas do cookie, é a mesma chegada. Sem cookie
+   * (bloqueado entre subdomínios), referrer interno também conta como
+   * carregada — o toque já foi registrado na página de origem.
+   */
+  function registerTouch(touch) {
+    if (!touch) return null
+    var last = readTouchCookie(LAST_TOUCH_COOKIE)
+    var carried = internalReferrer() && (!last || carriesLastTouch(touch, last))
+
+    var stored = pick(touch, TOUCH_KEYS)
+    stored.at = Date.now()
+    if (!carried || !last) setCookie(LAST_TOUCH_COOKIE, JSON.stringify(stored), TOUCH_DAYS)
+
+    // O primeiro toque precisa de UTM: um fbclid sozinho não diz a campanha.
+    var utms = pick(touch, UTM_KEYS)
+    if (Object.keys(utms).length > 0 && !readTouchCookie(FIRST_TOUCH_COOKIE)) {
+      utms.at = stored.at
+      setCookie(FIRST_TOUCH_COOKIE, JSON.stringify(utms), TOUCH_DAYS)
+    }
+
+    if (carried) return null
+    touch.touch_id = uuid()
+    return touch
+  }
+
+  var urlTouch = readUrlTouch()
+  var currentTouch = registerTouch(urlTouch)
+
+  /** As UTMs do último toque: as da URL, senão as do cookie. */
+  function getUtms() {
+    return pick(urlTouch || readTouchCookie(LAST_TOUCH_COOKIE) || {}, UTM_KEYS)
+  }
+
+  /**
+   * Leva as UTMs do último toque num link — só se o link não tiver UTM
+   * nenhuma. Misturar as nossas com as que o link já tem criaria um conjunto
+   * que nunca existiu. Devolve se mudou algo.
+   */
+  function carryUtms(url) {
+    for (var i = 0; i < UTM_KEYS.length; i++) {
+      if (url.searchParams.get(UTM_KEYS[i])) return false
+    }
+    var utms = getUtms()
+    var changed = false
+    for (var key in utms) {
+      url.searchParams.set(key, utms[key])
+      changed = true
+    }
+    return changed
   }
 
   // ---------------------------------------------------------------------
@@ -618,13 +744,23 @@
       ga_client_id: getGaClientId(),
       ga_session_id: session.id,
       ga_session_number: session.number,
-      referrer: document.referrer || null,
+      referrer: externalReferrer(),
       utm_source: utms.utm_source || null,
       utm_medium: utms.utm_medium || null,
       utm_campaign: utms.utm_campaign || null,
       utm_term: utms.utm_term || null,
       utm_content: utms.utm_content || null,
     }
+
+    // O toque desta página vai em todo identify dela (boot, formulário,
+    // backfill do GA) com o mesmo touch_id: o servidor grava uma linha só.
+    if (currentTouch) {
+      payload.touch = pick(currentTouch, TOUCH_KEYS.concat(["touch_id"]))
+      payload.touch.referrer = externalReferrer()
+      payload.touch.landing_url = location.origin + location.pathname
+    }
+    var first = readTouchCookie(FIRST_TOUCH_COOKIE)
+    if (first) payload.first_touch = first
 
     if (traits) {
       if (traits.email) payload.email = traits.email
@@ -860,16 +996,16 @@
         // domínio já deveria levar o id, mas a URL é a garantia quando ele
         // falha (cookie bloqueado, host-only antigo). Não é checagem de
         // segurança: o domínio vem do próprio navegador (cookieDomain()).
-        var dominio = cookieDomain()
-        var isSibling =
-          dominio &&
-          url.hostname !== location.hostname &&
-          ("." + url.hostname).slice(-dominio.length) === dominio
+        // As UTMs do último toque vão junto pelo mesmo motivo: sem cookie, o
+        // quiz não teria como saber de onde a pessoa veio.
+        var isSibling = url.hostname !== location.hostname && sameSite(url.hostname)
         if (isSibling && !isCheckout && !isWhats) {
+          var changed = carryUtms(url)
           if (url.searchParams.get(URL_PARAM) !== trckUserId) {
             url.searchParams.set(URL_PARAM, trckUserId)
-            link.setAttribute("href", url.toString())
+            changed = true
           }
+          if (changed) link.setAttribute("href", url.toString())
           continue
         }
 
@@ -902,6 +1038,9 @@
           if (!url.searchParams.get("src")) {
             url.searchParams.set("src", trckUserId)
           }
+          // As utm_* o PerfectPay repassa: a venda chega com o último toque
+          // mesmo quando a página do botão não tinha UTM na URL.
+          carryUtms(url)
           // Mantido também como `tuid` pra plataformas que repassam
           // parâmetros livres (usado por adaptadores futuros).
           url.searchParams.set(URL_PARAM, trckUserId)

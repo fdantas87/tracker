@@ -15,8 +15,10 @@ import type { AdapterResult, PurchaseStatus, WebhookAdapter } from "./types"
  * primeiro payload real.
  *
  * Tradução (decidida com o usuário; Purchase = pagamento CONFIRMADO):
+ *   paymentCreated   -> venda pendente, SEM Purchase (cartão só autorizado)
  *   paymentSucceeded -> venda aprovada + Purchase (inclusive renovação e refil:
  *                       cada cobrança é um pagamento novo, com id próprio)
+ *   paymentFailed    -> cancelada
  *   paymentRefunded  -> reembolsada (reembolso parcial é ignorado, como no Stripe)
  *   paymentCanceled  -> cancelada
  *   disputeCreated   -> chargeback
@@ -31,14 +33,18 @@ import type { AdapterResult, PurchaseStatus, WebhookAdapter } from "./types"
  */
 
 type Efeito =
-  | { kind: "purchase" }
+  | { kind: "purchase"; status: "approved" | "pending" }
   | { kind: "statusUpdate"; status: PurchaseStatus }
   | { kind: "refund" }
   | { kind: "disputeUpdate" }
 
 /** Chave normalizada: minúscula, sem `_`, `.` ou `-` (paymentSucceeded, payment.succeeded...). */
 const EVENTOS: Record<string, Efeito> = {
-  paymentsucceeded: { kind: "purchase" },
+  paymentsucceeded: { kind: "purchase", status: "approved" },
+  // Cartão autorizado, à espera do médico para capturar: a venda entra como
+  // pendente (sem Purchase) e o paymentSucceeded do MESMO pagamento a aprova.
+  paymentcreated: { kind: "purchase", status: "pending" },
+  paymentfailed: { kind: "statusUpdate", status: "canceled" },
   paymentrefunded: { kind: "refund" },
   paymentcanceled: { kind: "statusUpdate", status: "canceled" },
   paymentcancelled: { kind: "statusUpdate", status: "canceled" },
@@ -182,7 +188,7 @@ function parse(body: Record<string, unknown>): AdapterResult {
     return { ok: true, ignored: "disputa_em_andamento" }
   }
 
-  // --- paymentSucceeded ------------------------------------------------------
+  // --- paymentSucceeded / paymentCreated --------------------------------------
   const patient = asObject(data.patient)
   const customer = asObject(data.customer)
   const address = asObject(patient.address)
@@ -192,7 +198,7 @@ function parse(body: Record<string, unknown>): AdapterResult {
   const telefone = pick(fontesPaciente, ["phone", "phoneNumber", "mobilePhone", "patientPhone"])
 
   // Sem campo de valor nenhum: 400 com as chaves, que diz onde o valor está.
-  if (pago === null) return erro("paymentSucceeded sem valor reconhecível", body)
+  if (pago === null) return erro(`${tipo} sem valor reconhecível`, body)
 
   // Pagamento de teste: a rota o trata em modo simulação (não grava venda, não
   // envia ao Meta/GA4; só registra o evento em Eventos). O botão "Test" da Bask
@@ -223,7 +229,7 @@ function parse(body: Record<string, unknown>): AdapterResult {
       // uma venda real futura com esse id colidiria com o evento simulado.
       transactionId: isTest ? `test_${transactionId}` : transactionId,
       isTest,
-      status: "approved",
+      status: efeito.status,
       platformStatus: tipo,
 
       amount: pago,

@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge"
 import { PurchaseStatusBadge } from "@/components/dashboard/purchase-status-badge"
 import { carregarFicha } from "@/app/(dashboard)/leads/actions"
 import { formatarCompleto, formatarHoraNoFuso, formatarMoeda } from "@/lib/dashboard/format"
-import type { LeadDetail } from "@/lib/dashboard/leads"
+import type { LeadDetail, LeadTouch, UtmSet } from "@/lib/dashboard/leads"
 
 function Campo({ titulo, children }: { titulo: string; children: ReactNode }) {
   return (
@@ -116,26 +116,93 @@ function Geolocalizacao({ detalhe }: { detalhe: LeadDetail }) {
   )
 }
 
+function temUtm(utm: UtmSet | null): utm is UtmSet {
+  return Boolean(utm && (utm.source || utm.medium || utm.campaign || utm.term || utm.content))
+}
+
+function Toque({ titulo, utm, quando }: { titulo: string; utm: UtmSet; quando?: string }) {
+  return (
+    <div className="space-y-2 rounded-lg border p-2.5">
+      <p className="text-xs font-medium">
+        {titulo}
+        {quando ? (
+          <span className="font-normal text-muted-foreground"> · {formatarCompleto(quando)}</span>
+        ) : null}
+      </p>
+      <dl className="grid grid-cols-2 gap-2 text-xs">
+        <Campo titulo="Source">{utm.source ?? "—"}</Campo>
+        <Campo titulo="Medium">{utm.medium ?? "—"}</Campo>
+        <Campo titulo="Campaign">{utm.campaign ?? "—"}</Campo>
+        <Campo titulo="Content">{utm.content ?? "—"}</Campo>
+        {utm.term ? <Campo titulo="Term">{utm.term}</Campo> : null}
+      </dl>
+    </div>
+  )
+}
+
+function rotuloDoToque(toque: LeadTouch): string {
+  const partes = [toque.source, toque.medium].filter(Boolean).join(" / ")
+  if (partes) return partes
+  if (toque.clickId === "fbclid") return "Anúncio do Meta (sem UTM)"
+  if (toque.clickId === "gclid") return "Anúncio do Google (sem UTM)"
+  return "Sem UTM"
+}
+
 function OrigemUtm({ detalhe }: { detalhe: LeadDetail }) {
-  const { utm } = detalhe
-  const vazio = !utm.source && !utm.medium && !utm.campaign && !utm.term && !utm.content
+  const { utm, firstUtm, touches } = detalhe
+  const ultimo = temUtm(utm) ? utm : null
+  // Quando só houve um toque, primeiro e último são o mesmo: mostra um bloco só.
+  const mesmoToque =
+    firstUtm !== null &&
+    ultimo !== null &&
+    (["source", "medium", "campaign", "term", "content"] as const).every(
+      (campo) => firstUtm[campo] === ultimo[campo]
+    )
 
   return (
     <Secao titulo="Origem / UTM">
-      {vazio ? (
+      {!firstUtm && !ultimo ? (
         <p className="text-xs text-muted-foreground">
-          Tráfego direto — nenhum parâmetro UTM na primeira visita.
+          Tráfego direto — nenhuma chegada com UTM registrada.
         </p>
       ) : (
-        <dl className="grid grid-cols-2 gap-3 text-xs">
-          <Campo titulo="Source">{utm.source ?? "—"}</Campo>
-          <Campo titulo="Medium">{utm.medium ?? "—"}</Campo>
-          <Campo titulo="Campaign">{utm.campaign ?? "—"}</Campo>
-          <Campo titulo="Term">{utm.term ?? "—"}</Campo>
-          <Campo titulo="Content">{utm.content ?? "—"}</Campo>
-          {utm.referrer ? <Campo titulo="Referrer">{utm.referrer}</Campo> : null}
-        </dl>
+        <div className="space-y-2">
+          {firstUtm ? (
+            <Toque
+              titulo={mesmoToque ? "Primeiro e último toque" : "Primeiro toque"}
+              utm={firstUtm}
+              quando={firstUtm.at}
+            />
+          ) : null}
+          {ultimo && !mesmoToque ? <Toque titulo="Último toque" utm={ultimo} /> : null}
+        </div>
       )}
+
+      {utm.referrer ? (
+        <dl className="text-xs">
+          <Campo titulo="Referrer de entrada">{utm.referrer}</Campo>
+        </dl>
+      ) : null}
+
+      {touches.length > 1 ? (
+        <div className="space-y-1.5 pt-1">
+          <p className="text-xs text-muted-foreground">Jornada · {touches.length} chegadas</p>
+          <ol className="space-y-1 border-l pl-3 text-xs">
+            {touches.map((toque) => (
+              <li key={toque.id} className="min-w-0">
+                <span className="font-medium">{rotuloDoToque(toque)}</span>
+                {toque.campaign ? (
+                  <span className="text-muted-foreground"> · {toque.campaign}</span>
+                ) : null}
+                <p className="truncate text-muted-foreground">
+                  {formatarCompleto(toque.touchedAt)}
+                  {toque.landingUrl ? ` · ${toque.landingUrl.replace(/^https?:\/\//, "")}` : ""}
+                </p>
+              </li>
+            ))}
+          </ol>
+        </div>
+      ) : null}
     </Secao>
   )
 }

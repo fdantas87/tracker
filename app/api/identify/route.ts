@@ -15,6 +15,13 @@ import {
 } from "@/lib/rate-limit"
 import { createServiceClient } from "@/lib/supabase/service"
 import {
+  cleanFirstTouch,
+  cleanTouch,
+  fillFirstTouch,
+  recordTouch,
+  temUtm,
+} from "@/lib/touches"
+import {
   LIMITS,
   cleanString,
   cleanUrl,
@@ -88,7 +95,12 @@ export async function POST(request: Request) {
   // (a esmagadora maioria das chamadas) não traz nada e não dispara nada.
   const hasPii = Boolean(email || phone || firstName || lastName)
 
+  // As UTMs do corpo são o ÚLTIMO toque do navegador (URL ou cookie
+  // `thetrack_last`). O toque e o primeiro toque vêm em campos próprios.
   const utms = cleanUtms(body)
+  const touch = cleanTouch(body.touch)
+  const firstTouch = cleanFirstTouch(body.first_touch)
+  const referrer = cleanUrl(body.referrer)
 
   const row = {
     trck_user_id: trckUserId,
@@ -104,8 +116,6 @@ export async function POST(request: Request) {
     ga_client_id: cleanString(body.ga_client_id, LIMITS.id),
     ga_session_id: cleanString(body.ga_session_id, LIMITS.id),
     ga_session_number: toSmallInt(body.ga_session_number),
-    ...utms,
-    referrer: cleanUrl(body.referrer),
     ip: toInetOrNull(geo.ip),
     user_agent: cleanString(
       request.headers.get("user-agent"),
@@ -121,12 +131,13 @@ export async function POST(request: Request) {
     updated_at: new Date().toISOString(),
   }
 
-  // Campo nulo não pode apagar o que já foi capturado antes: numa visita
-  // seguinte sem UTM na URL, manter a origem da primeira visita é o
-  // comportamento certo pra atribuição.
-  const payload = Object.fromEntries(
+  // Campo nulo não pode apagar o que já foi capturado antes.
+  const payload: Record<string, unknown> = Object.fromEntries(
     Object.entries(row).filter(([, value]) => value !== null)
   )
+  // As UTMs são a exceção: vão como CONJUNTO, nulos inclusive. Campo a campo,
+  // o utm_source de um toque ficaria ao lado do utm_campaign de outro.
+  if (temUtm(utms)) Object.assign(payload, utms)
 
   try {
     const supabase = createServiceClient()
@@ -152,6 +163,25 @@ export async function POST(request: Request) {
     const identified =
       Boolean(saved?.email_hash || saved?.phone_hash) ||
       costurados.includes(trckUserId)
+
+    // Jornada de UTMs: histórico, primeiro toque e o referrer original (o
+    // track.js só manda referrer de fora do site; o primeiro que chegar fica).
+    // Nada disso derruba o identify — as funções engolem o próprio erro.
+    const primeiro =
+      firstTouch ??
+      (touch && temUtm(touch) ? { ...touch, at: new Date().toISOString() } : null)
+    await Promise.all([
+      touch ? recordTouch(supabase, trckUserId, touch) : null,
+      primeiro ? fillFirstTouch(supabase, trckUserId, primeiro) : null,
+      referrer
+        ? supabase
+            .from("visitors")
+            .update({ referrer })
+            .eq("trck_user_id", trckUserId)
+            .is("referrer", null)
+            .then(() => null)
+        : null,
+    ])
 
     if (hasPii) {
       // Primeira vez que a identidade aparece. `is null` preserva a semântica
