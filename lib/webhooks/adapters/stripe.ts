@@ -127,7 +127,9 @@ function readPaymentMethod(raw: string | null): {
  */
 function findTrckUserId(session: Record<string, unknown>): string | null {
   const direct = cleanString(session.client_reference_id, LIMITS.id)
-  if (direct) return direct.match(UUID_PATTERN)?.[0] ?? direct
+  // Só UUID: o parâmetro vem da URL do Payment Link, e qualquer outro texto
+  // poderia apontar para os visitantes mínimos do servidor (`stripe_tx_*`).
+  if (direct) return direct.match(UUID_PATTERN)?.[0] ?? null
 
   for (const value of Object.values(asObject(session.metadata))) {
     const match = cleanString(value, LIMITS.url)?.match(UUID_PATTERN)

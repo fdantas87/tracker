@@ -1,5 +1,6 @@
 import "server-only"
 
+import { isAdmin } from "@/lib/auth/is-admin"
 import { createClient } from "@/lib/supabase/server"
 
 /**
@@ -19,6 +20,9 @@ export async function requireUser() {
 
   if (!user) {
     throw new Error("Sessão expirada. Entre de novo para continuar.")
+  }
+  if (!isAdmin(user)) {
+    throw new Error("Esta conta não tem acesso ao painel.")
   }
 
   return user

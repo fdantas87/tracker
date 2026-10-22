@@ -11,7 +11,7 @@
 -- Supabase e rode uma vez. O editor executa tudo numa transação única, então
 -- ou o schema inteiro aplica, ou nada aplica — não existe meio-termo.
 --
--- 20 arquivos, na ordem de aplicação:
+-- 22 arquivos, na ordem de aplicação:
 --   supabase/setup-preflight.sql                                         1eb5dba9
 --   supabase/migrations/20260916140000_extensions.sql                    b4e4fd34
 --   supabase/migrations/20260916140100_tables.sql                        245ec9a0
@@ -32,6 +32,8 @@
 --   supabase/migrations/20261021120000_platform_integrations.sql         5cf99d10
 --   supabase/migrations/20261021140000_visitors_fbp_index.sql            0265c428
 --   supabase/migrations/20261022120000_utm_touches.sql                   2650510a
+--   supabase/migrations/20261022150000_revoke_rpc_anon.sql               7d077e94
+--   supabase/migrations/20261022150100_admin_role.sql                    049e9442
 -- ============================================================================
 
 -- >>> supabase/setup-preflight.sql
@@ -1982,3 +1984,89 @@ from public.visitors v
 where p.trck_user_id = v.trck_user_id
   and p.match_found
   and v.first_touch_at is not null;
+
+-- >>> supabase/migrations/20261022150000_revoke_rpc_anon.sql
+-- Fecha as funções do schema public para anon e authenticated.
+--
+-- Todas as migrations anteriores faziam `revoke all on function ... from public`
+-- e `grant execute ... to service_role`. Isso NÃO bastava: no Supabase o schema
+-- public tem default privileges que concedem EXECUTE explicitamente a `anon` e
+-- `authenticated`, e revogar de PUBLIC não remove concessão explícita. Com a anon
+-- key (pública por natureza) qualquer pessoa chamava `/rest/v1/rpc/<função>` —
+-- inclusive claim_pending_events (devolve events_log com PII e tira os eventos
+-- da fila), fill_visitor_pii, store_secret e bump_rate_limit.
+--
+-- Nenhum código do app chama RPC com sessão de usuário: todas as chamadas usam
+-- o service_role, que mantém o EXECUTE concedido nas migrations de origem.
+-- O pg_cron roda como postgres (dono), então os jobs não são afetados.
+--
+-- Idempotente: pode rodar mais de uma vez.
+
+revoke execute on all functions in schema public from public, anon, authenticated;
+
+-- Funções criadas daqui em diante também nascem fechadas.
+alter default privileges in schema public revoke execute on functions from public, anon, authenticated;
+
+-- >>> supabase/migrations/20261022150100_admin_role.sql
+-- Papel de admin: ter sessão no Supabase Auth deixa de bastar.
+--
+-- As policies de leitura eram `using (true)` para `authenticated`. Com o signup
+-- do Supabase Auth ligado (padrão em projeto hospedado), qualquer pessoa criava
+-- conta pela anon key em /auth/v1/signup e lia visitors, events_log, purchases e
+-- visitor_touches direto pelo PostgREST — sem passar pelo app. Agora só lê quem
+-- tem `app_metadata.role = 'admin'`, que só o service_role (ou o SQL Editor)
+-- escreve. O app aplica a mesma regra em lib/auth/is-admin.ts.
+--
+-- is_admin() lê auth.users, não o JWT: um token emitido antes desta migration
+-- não carrega o papel, e o painel ficaria vazio até o refresh.
+
+-- 1. Promove as contas que JÁ existem. Confira a lista em Authentication →
+--    Users antes de rodar: toda conta presente vira admin, inclusive uma que
+--    tenha sido criada por signup indevido.
+update auth.users
+set raw_app_meta_data = coalesce(raw_app_meta_data, '{}'::jsonb) || '{"role":"admin"}'::jsonb
+where coalesce(raw_app_meta_data->>'role', '') <> 'admin';
+
+-- 2. Função usada pelas policies.
+create or replace function public.is_admin()
+returns boolean
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select exists (
+    select 1 from auth.users
+    where id = auth.uid()
+      and raw_app_meta_data->>'role' = 'admin'
+  );
+$$;
+
+revoke all on function public.is_admin() from public, anon;
+grant execute on function public.is_admin() to authenticated, service_role;
+
+-- 3. Policies. `(select ...)` faz o Postgres avaliar uma vez por consulta, não
+--    uma vez por linha.
+drop policy if exists "authenticated_read_visitors" on public.visitors;
+create policy "authenticated_read_visitors"
+  on public.visitors for select
+  to authenticated
+  using ((select public.is_admin()));
+
+drop policy if exists "authenticated_read_events_log" on public.events_log;
+create policy "authenticated_read_events_log"
+  on public.events_log for select
+  to authenticated
+  using ((select public.is_admin()));
+
+drop policy if exists "authenticated_read_purchases" on public.purchases;
+create policy "authenticated_read_purchases"
+  on public.purchases for select
+  to authenticated
+  using ((select public.is_admin()));
+
+drop policy if exists "authenticated_read_visitor_touches" on public.visitor_touches;
+create policy "authenticated_read_visitor_touches"
+  on public.visitor_touches for select
+  to authenticated
+  using ((select public.is_admin()));

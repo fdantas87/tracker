@@ -6,6 +6,7 @@ import {
   verifyWebhookToken,
 } from "@/lib/crypto/webhook-token"
 import { drainEventQueue } from "@/lib/dispatch/event-dispatch"
+import { getGeo } from "@/lib/geo"
 import { CRON_RULE, checkRateLimit } from "@/lib/rate-limit"
 import { createServiceClient } from "@/lib/supabase/service"
 
@@ -42,7 +43,10 @@ export const maxDuration = 60
 const BATCH_LIMIT = 150
 
 export async function POST(request: Request) {
-  const limit = await checkRateLimit("cron", "dispatch", CRON_RULE)
+  // Balde por IP, não global: com chave fixa, 10 requisições anônimas por
+  // minuto (sem token nenhum) esgotavam o limite e o pg_cron levava 429.
+  const ip = getGeo(request.headers).ip ?? "sem-ip"
+  const limit = await checkRateLimit("cron", `dispatch:${ip}`, CRON_RULE)
   if (!limit.allowed) {
     return Response.json({ error: "rate_limited" }, { status: 429 })
   }

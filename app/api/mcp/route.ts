@@ -1,5 +1,6 @@
 import { callTool, listTools, MCP_INSTRUCTIONS } from "@/lib/clarity/mcp"
 import { verifyWebhookToken } from "@/lib/crypto/webhook-token"
+import { getGeo } from "@/lib/geo"
 import { checkRateLimit, type RateLimitRule } from "@/lib/rate-limit"
 import { createServiceClient } from "@/lib/supabase/service"
 
@@ -92,7 +93,9 @@ async function handle(msg: RpcRequest): Promise<object | null> {
 }
 
 export async function POST(request: Request) {
-  const limit = await checkRateLimit("mcp", "clarity", MCP_RULE)
+  // Balde por IP: chave global deixava qualquer anônimo bloquear o dono.
+  const ip = getGeo(request.headers).ip ?? "sem-ip"
+  const limit = await checkRateLimit("mcp", `clarity:${ip}`, MCP_RULE)
   if (!limit.allowed) {
     return Response.json(rpcError(null, -32000, "Muitas requisições. Tente em um minuto."), {
       status: 429,

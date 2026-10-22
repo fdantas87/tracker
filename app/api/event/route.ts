@@ -13,6 +13,7 @@ import {
   resolveDispatchDelayMs,
 } from "@/lib/settings/dispatch-config"
 import { createServiceClient } from "@/lib/supabase/service"
+import { isTrckUserId } from "@/lib/trck-id"
 import {
   LIMITS,
   cleanEventName,
@@ -53,6 +54,8 @@ export const maxDuration = 30
 const MAX_EVENT_AGE_MS = 6 * 24 * 60 * 60 * 1000
 /** Relógio de cliente adiantado é comum; mais que isso é lixo. */
 const MAX_EVENT_FUTURE_MS = 5 * 60 * 1000
+/** Eventos que só nascem no servidor (webhook). Comparação em minúsculas. */
+const SERVER_ONLY_EVENTS = new Set(["purchase"])
 
 export async function OPTIONS(request: Request) {
   return preflightResponse(request)
@@ -90,7 +93,12 @@ export async function POST(request: Request) {
   if (!eventName) {
     return jsonResponse(request, { error: "invalid_event_name" }, 400)
   }
-  if (!trckUserId) {
+  // Purchase = pagamento confirmado, e só o webhook (autenticado) prova isso.
+  // Aceitá-lo aqui deixaria qualquer `curl` anônimo injetar compra no Meta.
+  if (SERVER_ONLY_EVENTS.has(eventName.toLowerCase())) {
+    return jsonResponse(request, { error: "event_not_allowed" }, 400)
+  }
+  if (!isTrckUserId(trckUserId)) {
     return jsonResponse(request, { error: "trck_user_id_required" }, 400)
   }
 

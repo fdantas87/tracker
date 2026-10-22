@@ -60,6 +60,7 @@
   // sem gerar um trck_user_id novo pra ele.
   var LEGACY_KEY = "negou_tuid"
   var URL_PARAM = "tuid"
+  var UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
   var COOKIE_DAYS = 365
 
   /**
@@ -283,6 +284,9 @@
    */
   function resolveId() {
     var fromUrl = param(URL_PARAM) || param("trck_user_id")
+    // Só UUID: um link com `?tuid=<qualquer coisa>` não pode plantar um id
+    // arbitrário, gravado por 365 dias, no navegador de quem clicou.
+    if (fromUrl && !UUID_RE.test(fromUrl)) fromUrl = null
     if (fromUrl) {
       setCookie(COOKIE_NAME, fromUrl, COOKIE_DAYS)
       storageSet(STORAGE_KEY, fromUrl)

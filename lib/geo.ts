@@ -43,11 +43,13 @@ export type GeoInfo = {
 export function getClientIp(headers: Headers): string | null {
   const forwarded = headers.get("x-forwarded-for")
   if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim()
+    // Teto de tamanho: o valor vira chave do rate limit, e um IPv6 com zona
+    // cabe com folga em 64. Fora da Vercel o header é controlado pelo cliente.
+    const first = forwarded.split(",")[0]?.trim().slice(0, 64)
     if (first) return first
   }
 
-  return headers.get("x-real-ip")?.trim() || null
+  return headers.get("x-real-ip")?.trim().slice(0, 64) || null
 }
 
 export function getGeo(headers: Headers): GeoInfo {

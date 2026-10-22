@@ -14,6 +14,7 @@ import {
   rateLimitHeaders,
 } from "@/lib/rate-limit"
 import { createServiceClient } from "@/lib/supabase/service"
+import { isTrckUserId } from "@/lib/trck-id"
 import {
   cleanFirstTouch,
   cleanTouch,
@@ -83,8 +84,9 @@ export async function POST(request: Request) {
   // trck_user_id vem do cliente quando o visitante já foi identificado antes
   // (cookie ou parâmetro de URL vindo de outro domínio). Se não vier, nasce
   // aqui.
+  // Fora do formato UUID, o id é tratado como ausente: nasce um novo.
   const incomingId = cleanString(body.trck_user_id, LIMITS.id)
-  const trckUserId = incomingId ?? randomUUID()
+  const trckUserId = isTrckUserId(incomingId) ? incomingId : randomUUID()
 
   const email = cleanString(body.email, LIMITS.shortText)
   const phone = cleanString(body.phone, LIMITS.shortText)

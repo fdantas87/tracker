@@ -302,7 +302,8 @@ Três endpoints públicos (`/api/config/public`, `/api/identify`, `/api/event`) 
 - **Responde 200 sempre que entendeu o payload**, mesmo se o disparo falhar depois. Plataforma de pagamento reenvia webhook que não recebeu 2xx, e loop de reenvio por erro nosso só piora. O que deu errado fica em `response_meta`/`response_ga4`.
 - **Purchase só com pagamento confirmado** — ver a diretriz em "Convenções → Código". A rota só dispara quando o status FINAL da linha é `approved`.
 - **O adaptador tem quatro respostas, não duas** (`AdapterResult` em `lib/webhooks/adapters/types.ts`): a venda inteira (upsert), **só a troca de status** (`statusUpdate`, um UPDATE de `status`/`platform_status` — para reembolso e disputa que chegam só com ids e, pelo upsert, apagariam email, nome e valor), **ignorado** (evento legítimo fora do escopo, responde **200**) e erro (400). A diferença entre ignorado e erro existe por causa de plataforma que desliga o endpoint por taxa de falha — a Bask desliga com 50% em 24 h, e um 400 de "evento que não usamos" derrubaria o endpoint inteiro.
-- **A venda nunca volta para `pending`** (`resolveStatus`, `lib/webhooks/status.ts`). Plataforma com entrega fora de ordem (a Bask documenta isso) pode mandar o "pedido criado" depois do "pagamento confirmado"; sem a regra, o upsert rebaixaria a venda aprovada. Sair de `refunded`/`chargeback` para `approved` **não** é bloqueado, de propósito: disputa ganha pelo vendedor é legítima.
+- **A venda nunca volta para `pending`** (`resolveStatus`, `lib/webhooks/status.ts`). Plataforma com entrega fora de ordem (a Bask documenta isso) pode mandar o "pedido criado" depois do "pagamento confirmado"; sem a regra, o upsert rebaixaria a venda aprovada. Sair de `refunded`/`chargeback` para `approved` só acontece pela **troca de status** (`statusUpdate`, `permiteReabrir`) — o caminho dos eventos explícitos de reversão, como a disputa ganha da Bask. Um "aprovado" comum chegando depois do reembolso é replay ou reentrega fora de ordem e é ignorado (revisão de segurança, 2026-10-22).
+- **Venda de outra plataforma com o mesmo `transaction_id` é recusada (409).** A coluna é UNIQUE global; sem a recusa, o token compartilhado em `/custom` (sem assinatura) reescreveria uma venda do Stripe pelo `pi_...`. A troca de status e a trava do Purchase também filtram por `platform`.
 - **`external_id` e o registro em `events_log` usam o `trck_user_id` do visitante casado**, não só o do payload. Antes, venda casada por email ia ao Meta sem `external_id` e sumia da tela de Eventos.
 - **Token no header `x-webhook-token` ou na querystring** (nem toda plataforma deixa configurar header). A URL completa nunca é logada, porque carrega o token.
 - **A assinatura do Stripe é decidida por `adapter.platform`, não pelo segmento da URL.** O `getAdapter` ignora maiúsculas; comparar a string crua deixava `/compra/Stripe` usar o adaptador do Stripe **sem conferir a assinatura** (só o token global era exigido). Corrigido em 2026-09-24.
@@ -1531,6 +1532,14 @@ Estas ações exigem login nas contas do próprio usuário e não podem ser feit
 - **Bask — o que falta, e é do usuário/cliente:** (1) publicar o código novo (o `track.js` com `sourceUrl()` e o diálogo); (2) na Bask, tirar o id do GA4 do card Google Analytics (é o mesmo do tracker) e manter o Meta Pixel nativo desligado; (3) no container GTM cadastrado na Bask, criar a tag "HTML personalizado" com o código de Integrações → Integrar plataforma → Bask, acionada em todas as páginas, e publicar; (4) percorrer um checkout de teste em janela anônima e conferir Lead, InitiateCheckout e SubmitApplication na tela Eventos; (5) antes do lançamento, verificar o domínio `intake.` na Bask (hoje "não verificado"). **Adiado por decisão do usuário:** ligar o add-on Webhooks (pay-as-you-go, 30 dias grátis) — só aí dá para escrever o adaptador contra o payload real e ter Purchase da Bask.
 - **Clarity — o que falta:** (1) rodar `20261005120000_clarity_integration.sql` no SQL Editor de cada banco e publicar (no banco do ambiente de desenvolvimento ela já está aplicada — a tela abriu o estado "não conectado" sem erro em 2026-10-05); (2) na tela **Mapa de Calor**, seguir o assistente: colar o endereço do projeto Clarity e o token da Data Export API (gerado só para o tracker) — salvar o token já confere no Clarity e traz os primeiros dados; (4) **conferir o `payload` do primeiro snapshot** (`select payload from clarity_snapshots order by id limit 1`) contra `lib/clarity/normalize.ts` e apertar os nomes de campo — só Traffic tem formato documentado; (5) clicar num botão "Mapa" e confirmar que o Clarity abre a página certa (`url_h`), e que o ID da URL do Clarity é o mesmo do script; (6) gerar o token do MCP e conectar pelo `claude mcp add` e pelo conector do claude.ai (`?token=`); (7) em site de saúde, Masking → Strict.
 - **Webhook `custom` + Bask — o que falta (2026-10-05):** (1) rodar `20261005205000_platform_custom_bask.sql` no SQL Editor **ANTES do deploy** — sem ela o CHECK recusa a linha e a venda `custom`/`bask` não é registrada; (2) publicar o código; (3) na Bask, Settings → Webhooks & API, criar **um webhook por evento** (Payment Succeeded, Payment Refunded, Payment Canceled, Dispute Created, Dispute Updated) para `https://SEU_DOMINIO/api/webhook/bask` com o header `x-webhook-token`; (4) testar com o botão Test do Payment Refunded (200 = URL e token certos; 400 traz os nomes dos campos); (5) na **primeira venda real**, conferir `raw_webhook` em Vendas e apertar a leitura do adaptador — principalmente se há email/telefone do paciente e se o valor está em dólar.
+- **Revisão de segurança (2026-10-22):** (1) em Authentication → Users, apagar
+  conta que não seja de quem administra o painel; (2) rodar
+  `20261022150000_revoke_rpc_anon.sql` e `20261022150100_admin_role.sql` no SQL
+  Editor **ANTES do deploy** — sem a segunda, o código novo recusa todo login
+  (ninguém tem o papel); (3) em Authentication → Sign In / Providers, desligar
+  "Allow new users to sign up"; (4) conferir com
+  `select has_function_privilege('anon','public.claim_pending_events(int)','execute');`
+  (deve dar `false`); (5) publicar.
 - **Jornada de UTMs (2026-10-22):** (1) rodar `20261022120000_utm_touches.sql` no SQL Editor de cada banco **ANTES do deploy** — sem ela o upsert do webhook (`first_utm_*`) falha e a venda não é registrada, e as fichas de Lead e Venda não abrem; (2) publicar; (3) o `track.js` novo vale sozinho nos sites (é servido pelo tracker), sem recopiar nada no GTM.
 - **Tags de plataforma (2026-10-21):** (1) rodar `20261021120000_platform_integrations.sql` no SQL Editor de cada banco **ANTES do deploy**; (2) publicar; (3) em cada projeto, conferir em Integrações → Plataformas que as plataformas em uso estão acesas — a migration só ativa as que já têm venda registrada.
 - Depois da fase 4 (painel de configurações): migrar os valores de `.credenciais-locais/` pro painel e apagar os arquivos.
@@ -1589,6 +1598,34 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 ---
 
 ## Histórico
+
+- **2026-10-22:** Revisão de segurança (estática, skill security-audit). Corrigido:
+  - **Funções do schema public executáveis por `anon`.** As migrations só
+    revogavam de `PUBLIC`; o Supabase concede EXECUTE a `anon`/`authenticated`
+    por default privileges. Com a anon key, `/rest/v1/rpc/claim_pending_events`
+    devolvia `events_log` com PII. Migration `20261022150000_revoke_rpc_anon.sql`.
+  - **Papel de admin.** Sessão deixou de bastar: painel, Server Actions e RLS
+    exigem `app_metadata.role = 'admin'` (`lib/auth/is-admin.ts`,
+    `public.is_admin()`). Motivo: o signup do Supabase Auth vem ligado e
+    qualquer um criava conta pela anon key e lia tudo pelo PostgREST. Migration
+    `20261022150100_admin_role.sql` promove as contas existentes. **Conta criada
+    no Studio nasce sem o papel** (SQL em `is-admin.ts`).
+  - `/api/event` recusa `Purchase` e o `value` do navegador tem teto de 1e6;
+    `trck_user_id` dos endpoints públicos e do `?tuid=` só em formato UUID.
+  - Webhook: venda de outra plataforma com o mesmo id → 409; replay de aprovado
+    não reabre reembolso; email/telefone/patientId casam pelo registro mais
+    antigo (o "mais recente" deixava o `/api/identify` sequestrar atribuição);
+    erros sem detalhe do PostgREST na resposta.
+  - Rate limit dos crons e do MCP por IP (a chave global deixava um anônimo
+    bloquear o pg_cron); login com limite por IP e por email; headers
+    anti-clickjacking fora de `/api` e `/track.js`.
+  - **Ficou de fora, por decisão pendente:** token de webhook por plataforma (o
+    mesmo token vale em `/custom`, sem assinatura) e `SETUP_TOKEN` no primeiro
+    acesso — os dois mudam URLs/variáveis já cadastradas.
+  - Verificado: `npm run build` verde, lint limpo nos arquivos tocados,
+    `node --check` no `track.js`, 13/13 no teste de mesa (status e formato do
+    id). **Não verificado:** as migrations não foram aplicadas, nada rodou
+    contra o banco nem no navegador.
 
 - **2026-10-22:** UTMs persistentes no funil inteiro (ver "Captura de
   eventos → Jornada de UTMs"). Antes a UTM só valia na página que a tinha na

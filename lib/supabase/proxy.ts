@@ -1,6 +1,8 @@
 import { createServerClient } from "@supabase/ssr"
 import { NextResponse, type NextRequest } from "next/server"
 
+import { isAdmin } from "@/lib/auth/is-admin"
+
 import { supabaseAnonKey, supabaseUrl } from "./env"
 
 /** Rotas que podem ser abertas sem sessão. */
@@ -59,12 +61,15 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser()
 
   const { pathname } = request.nextUrl
+  // Sessão sem papel de admin conta como "sem login": senão /login mandaria
+  // para / e o layout devolveria para /login, em loop.
+  const admin = isAdmin(user)
 
-  if (!user && !isPublicRoute(pathname)) {
+  if (!admin && !isPublicRoute(pathname)) {
     return redirectTo("/login", request, response)
   }
 
-  if (user && isPublicRoute(pathname)) {
+  if (admin && isPublicRoute(pathname)) {
     return redirectTo("/", request, response)
   }
 

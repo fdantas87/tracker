@@ -63,7 +63,9 @@ export async function dispatchPurchase(
   // external_id desde o PageView. Usar só o do payload deixava a venda sem
   // external_id no Meta e fora da tela de Eventos justamente quando o vínculo
   // veio pelo email (o caso normal na Bask, onde o checkout não repassa o id).
-  const trckUserId = purchase.trckUserId ?? asString(visitor?.trck_user_id)
+  // O visitante casado vem primeiro: o id do payload é texto do checkout e,
+  // sem visitante correspondente, viraria external_id e linha órfã.
+  const trckUserId = asString(visitor?.trck_user_id) ?? purchase.trckUserId
 
   const { metaResult, ga4Result, gaClientId } = await sendServerConversion({
     purchase,

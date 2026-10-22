@@ -191,7 +191,7 @@ export async function POST(
   }
 
   if ("statusUpdate" in parsed) {
-    return applyStatusUpdate(parsed.statusUpdate)
+    return applyStatusUpdate(adapter.platform, parsed.statusUpdate)
   }
 
   const purchase = parsed.purchase
@@ -260,9 +260,17 @@ export async function POST(
     // findVisitor, que preserva o vínculo com a visita.
     const { data: anterior } = await supabase
       .from("purchases")
-      .select("status, platform_status, trck_user_id, match_method")
+      .select("status, platform_status, trck_user_id, match_method, platform")
       .eq("transaction_id", purchase.transactionId)
       .maybeSingle()
+
+    // `transaction_id` é UNIQUE global, não por plataforma. Sem esta recusa, o
+    // token compartilhado em `/custom` (que não tem assinatura) reescreveria
+    // uma venda do Stripe pelo `pi_...` dela — valor, email, status e até a
+    // trava do Purchase. Ids de plataformas diferentes não colidem por acaso.
+    if (anterior && anterior.platform !== adapter.platform) {
+      return Response.json({ error: "transacao_de_outra_plataforma" }, { status: 409 })
+    }
 
     const final = resolveStatus(
       anterior
@@ -357,10 +365,9 @@ export async function POST(
     )
 
     if (upsertError) {
-      return Response.json(
-        { error: "persist_failed", detail: upsertError.message },
-        { status: 500 }
-      )
+      // Detalhe só no log: a mensagem do PostgREST expõe coluna e constraint.
+      console.error("[webhook] upsert de purchases falhou:", upsertError.message)
+      return Response.json({ error: "persist_failed" }, { status: 500 })
     }
 
     // --- 4.5. enriquecimento do visitante (fase 7.5) ------------------------
@@ -402,6 +409,7 @@ export async function POST(
       .from("purchases")
       .update({ meta_event_id: eventId })
       .eq("transaction_id", purchase.transactionId)
+      .eq("platform", adapter.platform)
       .is("meta_event_id", null)
       .select("id")
       .maybeSingle()
@@ -435,13 +443,8 @@ export async function POST(
       { status: 200 }
     )
   } catch (error) {
-    return Response.json(
-      {
-        error: "erro_interno",
-        detail: error instanceof Error ? error.message : "desconhecido",
-      },
-      { status: 500 }
-    )
+    console.error("[webhook] erro interno:", error instanceof Error ? error.message : error)
+    return Response.json({ error: "erro_interno" }, { status: 500 })
   }
 }
 
@@ -454,14 +457,17 @@ export async function POST(
  * antes da integração, e reenviar não a faria aparecer. Nunca dispara nada
  * para o Meta ou o GA4.
  */
-async function applyStatusUpdate(update: StatusUpdate): Promise<Response> {
+async function applyStatusUpdate(platform: string, update: StatusUpdate): Promise<Response> {
   try {
     const supabase = createServiceClient()
 
+    // Filtrado pela plataforma: venda de outra plataforma com o mesmo id conta
+    // como "não encontrada" (ver a recusa equivalente no upsert).
     const { data: atual } = await supabase
       .from("purchases")
       .select("status, platform_status")
       .eq("transaction_id", update.transactionId)
+      .eq("platform", platform)
       .maybeSingle()
 
     if (!atual) {
@@ -471,9 +477,12 @@ async function applyStatusUpdate(update: StatusUpdate): Promise<Response> {
       )
     }
 
+    // Aqui a reabertura de reembolso/chargeback é permitida: a troca de status
+    // é o caminho dos eventos explícitos de reversão (disputa ganha).
     const final = resolveStatus(
       { status: String(atual.status), platformStatus: String(atual.platform_status) },
-      { status: update.status, platformStatus: update.platformStatus }
+      { status: update.status, platformStatus: update.platformStatus },
+      { permiteReabrir: true }
     )
 
     if (final.mantido) {
@@ -487,23 +496,17 @@ async function applyStatusUpdate(update: StatusUpdate): Promise<Response> {
       .from("purchases")
       .update({ status: final.status, platform_status: final.platformStatus })
       .eq("transaction_id", update.transactionId)
+      .eq("platform", platform)
 
     if (error) {
-      return Response.json(
-        { error: "persist_failed", detail: error.message },
-        { status: 500 }
-      )
+      console.error("[webhook] troca de status falhou:", error.message)
+      return Response.json({ error: "persist_failed" }, { status: 500 })
     }
 
     return Response.json({ ok: true, status: final.status }, { status: 200 })
   } catch (error) {
-    return Response.json(
-      {
-        error: "erro_interno",
-        detail: error instanceof Error ? error.message : "desconhecido",
-      },
-      { status: 500 }
-    )
+    console.error("[webhook] erro interno:", error instanceof Error ? error.message : error)
+    return Response.json({ error: "erro_interno" }, { status: 500 })
   }
 }
 
@@ -547,13 +550,17 @@ async function findVisitor(
     if (data) return { visitor: data, method: "trck_user_id" }
   }
 
+  // Email, telefone e patientId casam pelo registro MAIS ANTIGO. O /api/identify
+  // é público: com o "mais recente", quem soubesse o email de um lead podia
+  // mandá-lo com o próprio fbp/UTM um minuto antes da compra e ficar com a
+  // atribuição da venda. O primeiro registro é o de quem chegou antes.
   const emailHash = hashEmail(purchase.buyerEmail)
   if (emailHash) {
     const { data } = await supabase
       .from("visitors")
       .select("*")
       .eq("email_hash", emailHash)
-      .order("updated_at", { ascending: false })
+      .order("created_at", { ascending: true })
       .limit(1)
     if (data && data.length > 0) return { visitor: data[0], method: "email" }
   }
@@ -564,7 +571,7 @@ async function findVisitor(
       .from("visitors")
       .select("*")
       .eq("phone_hash", phoneHash)
-      .order("updated_at", { ascending: false })
+      .order("created_at", { ascending: true })
       .limit(1)
     if (data && data.length > 0) return { visitor: data[0], method: "phone" }
   }
@@ -585,7 +592,7 @@ async function findVisitor(
       .select("trck_user_id")
       .eq("event_name", "SubmitApplication")
       .eq("custom_data->>patient_id", clienteId)
-      .order("created_at", { ascending: false })
+      .order("created_at", { ascending: true })
       .limit(1)
       .maybeSingle()
 

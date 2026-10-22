@@ -50,6 +50,12 @@ export const WEBHOOK_RULE: RateLimitRule = { limit: 30, windowSeconds: 60 }
  */
 export const CRON_RULE: RateLimitRule = { limit: 10, windowSeconds: 60 }
 
+/**
+ * Login do painel: 10 tentativas a cada 5 min, contadas por IP e por email.
+ * Sem isto a força bruta dependia só do limite padrão do Supabase Auth.
+ */
+export const LOGIN_RULE: RateLimitRule = { limit: 10, windowSeconds: 300 }
+
 export async function checkRateLimit(
   scope: string,
   identifier: string,

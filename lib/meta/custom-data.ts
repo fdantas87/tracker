@@ -15,13 +15,21 @@ import {
  * gravado na captura e só vira payload do Meta na hora do disparo, que pode
  * acontecer 15 minutos depois e num processo diferente.
  */
+/**
+ * Teto do `value` vindo do navegador. O /api/event é público: sem teto, um
+ * `curl` com `value: 1e9` entra no Meta como conversão real e distorce a
+ * otimização do pixel. Venda de verdade vem do webhook, que não passa por aqui.
+ */
+const MAX_BROWSER_VALUE = 1_000_000
+
 export function toMetaCustomData(
   customData: Record<string, unknown> | null
 ): MetaCustomData | null {
   if (!customData) return null
 
+  const amount = cleanAmount(customData.value)
   const mapped: MetaCustomData = {
-    value: cleanAmount(customData.value),
+    value: amount !== null && amount <= MAX_BROWSER_VALUE ? amount : null,
     currency: cleanString(customData.currency, 8),
     contentIds: cleanStringArray(customData.content_ids),
     contentName: cleanString(customData.content_name),

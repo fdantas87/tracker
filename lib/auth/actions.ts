@@ -1,8 +1,12 @@
 "use server"
 
 import { revalidatePath } from "next/cache"
+import { headers } from "next/headers"
 import { redirect } from "next/navigation"
 
+import { getClientIp } from "@/lib/geo"
+import { LOGIN_RULE, checkRateLimit } from "@/lib/rate-limit"
+import { isAdmin } from "@/lib/auth/is-admin"
 import { estadoDoSetup } from "@/lib/auth/setup"
 import { createClient } from "@/lib/supabase/server"
 import { createServiceClient } from "@/lib/supabase/service"
@@ -34,13 +38,29 @@ export async function signIn(
     return { error: "Informe email e senha." }
   }
 
+  const ip = getClientIp(await headers()) ?? "sem-ip"
+  const [porIp, porEmail] = await Promise.all([
+    checkRateLimit("login-ip", ip, LOGIN_RULE),
+    checkRateLimit("login-email", email.toLowerCase().slice(0, 255), LOGIN_RULE),
+  ])
+  if (!porIp.allowed || !porEmail.allowed) {
+    return { error: "Muitas tentativas. Aguarde alguns minutos e tente de novo." }
+  }
+
   const supabase = await createClient()
-  const { error } = await supabase.auth.signInWithPassword({ email, password })
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
 
   if (error) {
     // Mensagem genérica de propósito: distinguir "email não existe" de "senha
     // errada" entrega ao atacante quais emails têm conta no painel.
     return { error: "Email ou senha incorretos." }
+  }
+
+  // Conta válida no Supabase Auth, mas sem papel de admin (ver is-admin.ts).
+  // A sessão é encerrada na hora para não ficar um cookie órfão.
+  if (!isAdmin(data.user)) {
+    await supabase.auth.signOut()
+    return { error: "Esta conta não tem acesso ao painel." }
   }
 
   revalidatePath("/", "layout")
@@ -120,7 +140,8 @@ export async function completeSetup(
     // `app_metadata`, e não `user_metadata`: o usuário reescreve o segundo
     // sozinho, com a anon key (`auth.updateUser({ data })`). Só o service_role
     // escreve o primeiro, e `getUser()` devolve os dois igual.
-    app_metadata: { org_name: orgName },
+    // `role: "admin"` é o que abre o painel (ver is-admin.ts).
+    app_metadata: { org_name: orgName, role: "admin" },
   })
 
   if (createError) {

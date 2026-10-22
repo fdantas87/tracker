@@ -2,6 +2,7 @@ import { after } from "next/server"
 import { headers, cookies } from "next/headers"
 import { redirect } from "next/navigation"
 
+import { isAdmin } from "@/lib/auth/is-admin"
 import { getHealthStatus } from "@/lib/health/checks"
 import { ensureCronDispatchConfigured } from "@/lib/settings/cron-autoconfig"
 import { createClient } from "@/lib/supabase/server"
@@ -25,7 +26,8 @@ export default async function DashboardLayout({
     data: { user },
   } = await supabase.auth.getUser()
 
-  if (!user) {
+  // Sessão sem papel de admin (signup direto no Supabase Auth) não entra.
+  if (!isAdmin(user)) {
     redirect("/login")
   }
 

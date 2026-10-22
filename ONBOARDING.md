@@ -39,6 +39,12 @@ funções do Vault, a fila de disparo e os 3 jobs do `pg_cron`.
 > de texto. Copiar da página renderizada do GitHub, num arquivo de ~58 KB, já
 > truncou conteúdo em casos conhecidos.
 
+> **Desligue o cadastro público:** Authentication → Sign In / Providers →
+> desmarque *Allow new users to sign up*. O painel já recusa quem não tem o
+> papel de admin, mas sem isto qualquer pessoa cria conta no seu Supabase pela
+> anon key. Conta adicional criada no Studio precisa ser promovida a admin (SQL
+> em `lib/auth/is-admin.ts`).
+
 O script roda numa transação única: **ou o schema inteiro aplica, ou nada
 aplica**. Não existe meio-termo, e é por isso que ele é um arquivo só.
 
@@ -265,6 +271,7 @@ copie o `app_metadata` do primeiro usuário se quiser que os dois vejam igual.
 
 - [ ] Projeto Supabase criado, 3 chaves copiadas
 - [ ] `supabase/setup.sql` rodado, sem erro
+- [ ] Cadastro público do Supabase Auth desligado
 - [ ] Deploy feito pelo botão, 6 variáveis preenchidas
 - [ ] **Conta de administrador criada, ainda na URL `*.vercel.app`**
 - [ ] Deployment Protection em "Only Preview Deployments"

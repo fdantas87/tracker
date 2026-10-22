@@ -6,6 +6,7 @@ import {
   hashWebhookToken,
   verifyWebhookToken,
 } from "@/lib/crypto/webhook-token"
+import { getGeo } from "@/lib/geo"
 import { CRON_RULE, checkRateLimit } from "@/lib/rate-limit"
 import { createServiceClient } from "@/lib/supabase/service"
 
@@ -25,7 +26,9 @@ import { createServiceClient } from "@/lib/supabase/service"
 export const maxDuration = 120
 
 export async function POST(request: Request) {
-  const limit = await checkRateLimit("cron", "clarity", CRON_RULE)
+  // Balde por IP: chave global deixava qualquer anônimo bloquear o pg_cron.
+  const ip = getGeo(request.headers).ip ?? "sem-ip"
+  const limit = await checkRateLimit("cron", `clarity:${ip}`, CRON_RULE)
   if (!limit.allowed) {
     return Response.json({ error: "rate_limited" }, { status: 429 })
   }
