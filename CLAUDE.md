@@ -1599,6 +1599,31 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 
 ## Histórico
 
+- **2026-10-23:** Auditoria da lógica de tracking contra a doc atual do Meta e
+  do GA4. Corrigido:
+  - **Purchase sem `event_source_url`.** A doc do Meta exige o campo em evento
+    `website`. Agora é a última página do comprador em `events_log`
+    (`ultimaUrlDoVisitante`, em `purchase-dispatch.ts`), também gravada na
+    linha do Purchase em Eventos.
+  - **Purchase `website` sem user agent.** Venda sem visita casada (visitante
+    mínimo) ia como `website` sem `client_user_agent`, que a doc marca como
+    obrigatório. Sem UA **ou** sem URL, o `action_source` agora é `other`.
+  - **`_fbc` não era gravado em cookie.** O `getFbc()` do `track.js` montava o
+    valor só enquanto o `fbclid` estava na URL, com o timestamp do
+    carregamento. Agora grava o cookie (90 dias), mantém o timestamp do clique
+    e troca só quando chega um `fbclid` diferente.
+  - **`hashName` mantinha pontuação** ("lowercase only with no punctuation").
+    Hashes de nome já gravados com pontuação não são recalculados.
+  - **Ficou de fora, de propósito:** `consent` no Measurement Protocol (a doc
+    não diz o que vale sem ele, e mandar GRANTED sem saber a escolha do
+    visitante seria falso; fazer certo exige capturar o consentimento no
+    `track.js` e uma coluna nova) e o Purchase usar fbp/IP do visitante MAIS
+    ANTIGO no casamento por email (decisão de segurança da revisão de
+    2026-10-22).
+  - Verificado: `npm run build` verde, lint limpo, `node --check`, 9/9 no teste
+    de mesa (`hashName` e `getFbc` num `vm`). **Não verificado:** envio real ao
+    Meta e o `action_source` "other" no Events Manager.
+
 - **2026-10-22:** Revisão de segurança (estática, skill security-audit). Corrigido:
   - **Funções do schema public executáveis por `anon`.** As migrations só
     revogavam de `PUBLIC`; o Supabase concede EXECUTE a `anon`/`authenticated`

@@ -54,8 +54,9 @@ export type MetaEventInput = {
   eventTime: number
   eventSourceUrl?: string | null
   /**
-   * "website" para o que nasce no navegador; a compra do webhook também usa
-   * "website" porque a conversão aconteceu num checkout web.
+   * "website" para o que nasce no navegador. A compra do webhook usa
+   * "website" quando tem a visita (user agent + URL, que o Meta exige nesse
+   * caso) e "other" quando não tem — ver lib/dispatch/purchase-dispatch.ts.
    */
   actionSource?: string
   userData: MetaUserData

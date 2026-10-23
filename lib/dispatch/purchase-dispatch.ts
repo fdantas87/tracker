@@ -67,11 +67,14 @@ export async function dispatchPurchase(
   // sem visitante correspondente, viraria external_id e linha órfã.
   const trckUserId = asString(visitor?.trck_user_id) ?? purchase.trckUserId
 
+  const sourceUrl = trckUserId ? await ultimaUrlDoVisitante(trckUserId) : null
+
   const { metaResult, ga4Result, gaClientId } = await sendServerConversion({
     purchase,
     eventId,
     visitor,
     trckUserId,
+    sourceUrl,
     metaEventName: "Purchase",
     ga4EventName: "purchase",
   })
@@ -95,6 +98,7 @@ export async function dispatchPurchase(
         trck_user_id: trckUserId,
         event_name: "Purchase",
         event_id: eventId,
+        event_source_url: sourceUrl,
         utm_source: purchase.utmSource,
         utm_medium: purchase.utmMedium,
         utm_campaign: purchase.utmCampaign,
@@ -110,8 +114,26 @@ export async function dispatchPurchase(
   }
 }
 
+/**
+ * A última página do site em que o comprador esteve — em geral a que levou ao
+ * checkout. É o `event_source_url` do Purchase: o webhook não diz de qual
+ * página a compra partiu, e o Meta exige o campo em evento "website".
+ */
+async function ultimaUrlDoVisitante(trckUserId: string): Promise<string | null> {
+  const { data } = await createServiceClient()
+    .from("events_log")
+    .select("event_source_url")
+    .eq("trck_user_id", trckUserId)
+    .not("event_source_url", "is", null)
+    .order("event_time", { ascending: false })
+    .limit(1)
+    .maybeSingle()
+  return asString(data?.event_source_url)
+}
+
 type ServerConversionInput = PurchaseDispatchParams & {
   trckUserId: string | null
+  sourceUrl: string | null
   metaEventName: string
   ga4EventName: string
 }
@@ -147,6 +169,13 @@ async function sendServerConversion(input: ServerConversionInput) {
   // cair na sessão certa em vez de virar tráfego direto órfão.
   const gaClientId = asString(visitor?.ga_client_id)
 
+  // Evento "website" na CAPI EXIGE client_user_agent e event_source_url (doc
+  // do Meta). Venda sem visita casada (visitante mínimo, teste) não tem os
+  // dois: vai como "other", que não os exige, em vez de um evento que o Meta
+  // recusaria e que só apareceria como erro em response_meta.
+  const userAgent = asString(visitor?.user_agent)
+  const actionSource = userAgent && input.sourceUrl ? "website" : "other"
+
   // Meta e GA4 são independentes: em paralelo, o tempo total é o do mais lento
   // em vez da soma dos dois. Importa porque isto roda dentro do orçamento de
   // tempo da função serverless.
@@ -154,7 +183,8 @@ async function sendServerConversion(input: ServerConversionInput) {
       eventName: input.metaEventName,
       eventId,
       eventTime: Math.floor(Date.now() / 1000),
-      actionSource: "website",
+      eventSourceUrl: actionSource === "website" ? input.sourceUrl : null,
+      actionSource,
       testEventCode: config.testEventCode,
       customData: {
         value: purchase.amount,
@@ -193,7 +223,7 @@ async function sendServerConversion(input: ServerConversionInput) {
         fbp: asString(visitor?.fbp),
         fbc: asString(visitor?.fbc),
         clientIpAddress: asString(visitor?.ip),
-        clientUserAgent: asString(visitor?.user_agent),
+        clientUserAgent: userAgent,
       },
   }
 

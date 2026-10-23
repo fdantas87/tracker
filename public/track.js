@@ -352,17 +352,22 @@
   }
 
   /**
-   * Se o visitante chegou por anúncio, a URL traz fbclid. Quando o Pixel
-   * ainda não gravou o _fbc, montamos no formato que o Meta espera:
-   * fb.<subdominios>.<timestamp>.<fbclid>
+   * Se o visitante chegou por anúncio, a URL traz fbclid. Montamos o _fbc no
+   * formato que o Meta espera (fb.<subdominios>.<timestamp>.<fbclid>) e
+   * GRAVAMOS o cookie, como o Pixel faria: com o pixel suprimido ou bloqueado,
+   * sem o cookie o valor sumia na página seguinte e o timestamp virava o de
+   * cada carregamento, não o do clique. Clique novo (fbclid diferente do
+   * guardado) substitui o anterior; 90 dias é a validade do cookie do Meta.
    */
   function getFbc() {
     var cookie = getCookie("_fbc")
-    if (cookie) return cookie
-
     var fbclid = param("fbclid")
-    if (!fbclid) return null
-    return "fb.1." + Date.now() + "." + fbclid
+    if (!fbclid) return cookie
+    if (cookie && cookie.split(".").slice(3).join(".") === fbclid) return cookie
+
+    var value = "fb.1." + Date.now() + "." + fbclid
+    setCookie("_fbc", value, 90)
+    return value
   }
 
   /** _ga = "GA1.1.<parte1>.<parte2>"; o client_id é "<parte1>.<parte2>". */

@@ -179,10 +179,13 @@ export function hashPhone(
   return normalized ? sha256(normalized) : null
 }
 
-/** Nome e sobrenome: minúsculo, sem espaços nas pontas. */
+/**
+ * Nome e sobrenome: minúsculo e sem pontuação ("D'Ávila" -> "dávila"). A doc
+ * pede "lowercase only with no punctuation"; acento fica, em UTF-8.
+ */
 export function hashName(name: string | null | undefined): string | null {
   if (!name) return null
-  return hashNormalized(name.trim().toLowerCase())
+  return hashNormalized(name.toLowerCase().replace(/[\p{P}\p{S}]/gu, ""))
 }
 
 /** Cidade: minúsculo, sem espaços nem pontuação ("São Paulo" -> "sãopaulo"). */
