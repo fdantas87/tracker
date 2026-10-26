@@ -1471,6 +1471,7 @@ histórico de incidentes) (o `implementation_plan.md` foi removido; está no his
 - **Antes de declarar qualquer tarefa de código como concluída, rode `npm run build` e confirme saída 0.** Build falhou: corrija, rode de novo, repita. Nunca diga "pronto" com o build vermelho. A mesma regra está no `AGENTS.md`, para os outros agentes; está duplicada aqui porque o Claude Code carrega este arquivo automaticamente e não o `AGENTS.md`.
 - **O build não roda o ESLint.** Desde o Next.js 16, `next build` deixou de lintar (doc em `node_modules/next/dist/docs/01-app/02-guides/upgrading/version-16.md`). Erro de lint não derruba o deploy, mas quem mexeu em código roda `npm run lint` nos arquivos tocados.
 - **Duas camadas automáticas aplicam o mesmo gate, e as duas são rede de segurança, não substituto:** o hook `.husky/pre-push` (roda `npm run build` e recusa o push se falhar; contornável com `git push --no-verify`, e só existe numa máquina onde `npm install` rodou) e a GitHub Action `.github/workflows/build.yml` (roda em todo push e PR para `main`, não tem como contornar).
+- **Dependências: CLI e ferramenta de build vão em `devDependencies`.** O `shadcn` ficou em `dependencies` e trouxe 8 dos 11 pacotes vulneráveis do alerta de 2026-10-26 (SDK do MCP, express, hono, undici…), todos contados pelo Dependabot como "runtime". A CI roda `npm audit --omit=dev --audit-level=high` antes do build: vulnerabilidade alta/crítica no que vai para produção barra o push; a de ferramenta de build não. O `@import "shadcn/tailwind.css"` do `globals.css` só precisa do pacote no build, e a Vercel instala `devDependencies` no build.
 - **`git push` não é o único caminho até a Vercel.** Um `vercel --prod` pela CLI sobe o código direto, sem passar pelo hook nem pela Action. Nesse caminho, a única proteção é ter rodado o build antes.
 
 ---
@@ -1598,6 +1599,16 @@ npx shadcn@latest add <componente>   # adicionar novo componente shadcn/ui
 ---
 
 ## Histórico
+
+- **2026-10-26:** Alertas do Dependabot zerados (29 alertas em 11 pacotes).
+  `next` 16.3.5 → 16.4.3 (3 RCE críticos, SSRF no image optimization, DoS em
+  Server Actions, cache poisoning) e `eslint-config-next` junto; `shadcn` →
+  4.22.1 e movido para `devDependencies`; `npm audit fix` nos transitivos
+  (`sharp` 0.35.5, `source-map-js` 1.2.2, `zod`, `undici`, `fast-uri`…). Novo
+  `.github/dependabot.yml` (npm semanal agrupado, actions mensal) e gate de
+  audit na CI. Verificado: `npm audit` 0, build verde, `tsc` limpo; os 5 erros
+  de lint estão em arquivos não tocados. **Não verificado:** as páginas abertas
+  no navegador com o Next novo.
 
 - **2026-10-23:** Auditoria da lógica de tracking contra a doc atual do Meta e
   do GA4. Corrigido:

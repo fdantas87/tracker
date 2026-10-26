@@ -1,0 +1,17 @@
+# Security updates (alertas) saem sempre na hora, em PR próprio — isto aqui só
+# controla as atualizações de versão rotineiras, agrupadas para não virar spam.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      minor-e-patch:
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly

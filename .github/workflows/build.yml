@@ -16,4 +16,7 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      # Só o que vai para produção: ferramenta de build (devDependencies) não
+      # barra o deploy. Vulnerabilidade alta ou crítica em runtime, barra.
+      - run: npm audit --omit=dev --audit-level=high
       - run: npm run build
